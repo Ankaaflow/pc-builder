@@ -1,4 +1,5 @@
 import { Component, allComponents } from '../data/components';
+import { redditService } from '../services/redditService';
 
 export type Region = 'US' | 'CA' | 'UK' | 'DE' | 'AU';
 
@@ -52,12 +53,31 @@ export function calculateBudgetAllocation(totalBudget: number): BudgetAllocation
   };
 }
 
-export function findBestComponent(
+export async function findBestComponent(
   category: keyof typeof allComponents,
   budget: number,
   region: Region,
   requirements?: any
-): Component | null {
+): Promise<Component | null> {
+  // First try to get latest components from Reddit
+  try {
+    const redditComponents = await redditService.getLatestComponentsForType(category, region);
+    
+    if (redditComponents.length > 0) {
+      const affordable = redditComponents.filter(
+        component => component.price[region] <= budget && component.availability === 'in-stock'
+      );
+      
+      if (affordable.length > 0) {
+        // Sort by confidence/value - Reddit components are already sorted by confidence
+        return affordable[0];
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to fetch Reddit components, falling back to hardcoded data:', error);
+  }
+
+  // Fallback to hardcoded components
   const components = allComponents[category];
   
   // Filter by budget and availability
@@ -143,21 +163,33 @@ export function checkCompatibility(build: BuildConfiguration): {
   return { isCompatible, warnings };
 }
 
-export function generateRecommendedBuild(
+export async function generateRecommendedBuild(
   budget: number,
   region: Region
-): BuildConfiguration {
+): Promise<BuildConfiguration> {
   const allocation = calculateBudgetAllocation(budget);
   
+  // Build components asynchronously to get Reddit recommendations
+  const [cpu, gpu, motherboard, ram, storage, cooler, psu, caseComponent] = await Promise.all([
+    findBestComponent('cpu', allocation.cpu, region),
+    findBestComponent('gpu', allocation.gpu, region),
+    findBestComponent('motherboard', allocation.motherboard, region),
+    findBestComponent('ram', allocation.ram, region),
+    findBestComponent('storage', allocation.storage, region),
+    findBestComponent('cooler', allocation.cooler, region),
+    findBestComponent('psu', allocation.psu, region),
+    findBestComponent('case', allocation.case, region)
+  ]);
+  
   const build: BuildConfiguration = {
-    cpu: findBestComponent('cpu', allocation.cpu, region),
-    gpu: findBestComponent('gpu', allocation.gpu, region),
-    motherboard: findBestComponent('motherboard', allocation.motherboard, region),
-    ram: findBestComponent('ram', allocation.ram, region),
-    storage: findBestComponent('storage', allocation.storage, region),
-    cooler: findBestComponent('cooler', allocation.cooler, region),
-    psu: findBestComponent('psu', allocation.psu, region),
-    case: findBestComponent('case', allocation.case, region)
+    cpu,
+    gpu,
+    motherboard,
+    ram,
+    storage,
+    cooler,
+    psu,
+    case: caseComponent
   };
   
   return build;

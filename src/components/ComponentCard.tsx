@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { TrendingUp, TrendingDown, Minus, ExternalLink, CheckCircle, AlertCircle } from 'lucide-react';
 import { Component, Region } from '../utils/budgetAllocator';
 import { generateAffiliateLink } from '../utils/budgetAllocator';
+import RedditTooltip from './RedditTooltip';
 
 interface ComponentCardProps {
   component: Component;
@@ -74,7 +75,11 @@ const ComponentCard: React.FC<ComponentCardProps> = ({
         <div className="flex justify-between items-start mb-3">
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <h3 className="font-semibold text-gray-900">{component.name}</h3>
+              <RedditTooltip componentName={component.name}>
+                <h3 className="font-semibold text-gray-900 hover:text-blue-600 transition-colors">
+                  {component.name}
+                </h3>
+              </RedditTooltip>
               {showCompatibility && getCompatibilityIcon()}
             </div>
             <p className="text-sm text-gray-600 mb-2">{component.description}</p>

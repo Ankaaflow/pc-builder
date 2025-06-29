@@ -14,6 +14,7 @@ import {
   allComponents,
   checkCompatibility
 } from '../utils/budgetAllocator';
+import { redditService } from '../services/redditService';
 
 interface ComponentSelectorProps {
   budget: number;
@@ -39,6 +40,7 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
   
   const [activeCategory, setActiveCategory] = useState<keyof BuildConfiguration>('cpu');
   const [isLoading, setIsLoading] = useState(true);
+  const [currentCategoryComponents, setCurrentCategoryComponents] = useState<any[]>([]);
 
   const budgetAllocation = calculateBudgetAllocation(budget);
 
@@ -66,10 +68,36 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
 
   useEffect(() => {
     // Generate initial recommended build
-    const recommendedBuild = generateRecommendedBuild(budget, region);
-    setBuild(recommendedBuild);
-    setIsLoading(false);
+    const loadRecommendedBuild = async () => {
+      try {
+        const recommendedBuild = await generateRecommendedBuild(budget, region);
+        setBuild(recommendedBuild);
+        
+        // Load components for the initial category
+        const components = await getAlternativeComponents(activeCategory);
+        setCurrentCategoryComponents(components);
+      } catch (error) {
+        console.error('Failed to generate recommended build:', error);
+        // You could add error state handling here
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadRecommendedBuild();
   }, [budget, region]);
+
+  // Load components when category changes
+  useEffect(() => {
+    const loadCategoryComponents = async () => {
+      const components = await getAlternativeComponents(activeCategory);
+      setCurrentCategoryComponents(components);
+    };
+    
+    if (!isLoading) {
+      loadCategoryComponents();
+    }
+  }, [activeCategory, budget, region, isLoading]);
 
   const handleComponentSelect = (category: keyof BuildConfiguration, component: any) => {
     setBuild(prev => ({
@@ -85,9 +113,29 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
     }));
   };
 
-  const getAlternativeComponents = (category: keyof BuildConfiguration) => {
-    const categoryData = allComponents[category] || [];
+  const getAlternativeComponents = async (category: keyof BuildConfiguration) => {
     const budget = budgetAllocation[category];
+    
+    try {
+      // First try to get Reddit components
+      const redditComponents = await redditService.getLatestComponentsForType(category, region);
+      
+      if (redditComponents.length > 0) {
+        const filteredReddit = redditComponents.filter(component => 
+          component.price[region] <= budget * 1.5 && // Show components up to 150% of budget
+          component.availability === 'in-stock'
+        );
+        
+        if (filteredReddit.length > 0) {
+          return filteredReddit.sort((a, b) => a.price[region] - b.price[region]);
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to fetch Reddit components for alternatives:', error);
+    }
+    
+    // Fallback to hardcoded components
+    const categoryData = allComponents[category] || [];
     
     return categoryData.filter(component => 
       component.price[region] <= budget * 1.5 && // Show components up to 150% of budget
@@ -115,7 +163,6 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
     );
   }
 
-  const currentCategoryComponents = getAlternativeComponents(activeCategory);
   const selectedComponent = build[activeCategory];
 
   return (
