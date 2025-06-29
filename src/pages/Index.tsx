@@ -3,21 +3,32 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Cpu, HardDrive, MonitorSpeaker, MemoryStick, CircuitBoard, Zap, Box, Fan } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Slider } from '@/components/ui/slider';
+import { Cpu, HardDrive, MonitorSpeaker, MemoryStick, CircuitBoard, Zap, Box, Fan, Filter } from 'lucide-react';
 
-// Sample components data
+// Enhanced components data with brands and more options
 const sampleComponents = {
   cpu: [
-    { id: 'cpu1', name: 'AMD Ryzen 5 7600X', price: 229, specs: '6-Core, 4.7GHz Boost' },
-    { id: 'cpu2', name: 'Intel Core i5-13600K', price: 319, specs: '14-Core, 5.1GHz Boost' },
-    { id: 'cpu3', name: 'AMD Ryzen 7 7700X', price: 349, specs: '8-Core, 5.4GHz Boost' },
-    { id: 'cpu4', name: 'Intel Core i7-13700K', price: 409, specs: '16-Core, 5.4GHz Boost' }
+    { id: 'cpu1', name: 'AMD Ryzen 5 7600X', brand: 'AMD', price: 229, specs: '6-Core, 4.7GHz Boost, 32MB Cache' },
+    { id: 'cpu2', name: 'Intel Core i5-13600K', brand: 'Intel', price: 319, specs: '14-Core, 5.1GHz Boost, 24MB Cache' },
+    { id: 'cpu3', name: 'AMD Ryzen 7 7700X', brand: 'AMD', price: 349, specs: '8-Core, 5.4GHz Boost, 32MB Cache' },
+    { id: 'cpu4', name: 'Intel Core i7-13700K', brand: 'Intel', price: 409, specs: '16-Core, 5.4GHz Boost, 30MB Cache' },
+    { id: 'cpu5', name: 'AMD Ryzen 9 7900X', brand: 'AMD', price: 549, specs: '12-Core, 5.6GHz Boost, 64MB Cache' },
+    { id: 'cpu6', name: 'Intel Core i9-13900K', brand: 'Intel', price: 589, specs: '24-Core, 5.8GHz Boost, 36MB Cache' },
+    { id: 'cpu7', name: 'AMD Ryzen 5 7600', brand: 'AMD', price: 199, specs: '6-Core, 5.1GHz Boost, 32MB Cache' },
+    { id: 'cpu8', name: 'Intel Core i5-13400F', brand: 'Intel', price: 159, specs: '10-Core, 4.6GHz Boost, 20MB Cache' }
   ],
   gpu: [
-    { id: 'gpu1', name: 'NVIDIA RTX 4060', price: 299, specs: '8GB GDDR6, 1080p Gaming' },
-    { id: 'gpu2', name: 'AMD RX 7600 XT', price: 329, specs: '16GB GDDR6, 1440p Gaming' },
-    { id: 'gpu3', name: 'NVIDIA RTX 4070 Super', price: 599, specs: '12GB GDDR6X, 1440p Gaming' },
-    { id: 'gpu4', name: 'NVIDIA RTX 4080 Super', price: 999, specs: '16GB GDDR6X, 4K Gaming' }
+    { id: 'gpu1', name: 'NVIDIA RTX 4060', brand: 'NVIDIA', price: 299, specs: '8GB GDDR6, 1080p Gaming, DLSS 3' },
+    { id: 'gpu2', name: 'AMD RX 7600 XT', brand: 'AMD', price: 329, specs: '16GB GDDR6, 1440p Gaming, FSR 3' },
+    { id: 'gpu3', name: 'NVIDIA RTX 4070 Super', brand: 'NVIDIA', price: 599, specs: '12GB GDDR6X, 1440p Gaming, DLSS 3' },
+    { id: 'gpu4', name: 'NVIDIA RTX 4080 Super', brand: 'NVIDIA', price: 999, specs: '16GB GDDR6X, 4K Gaming, DLSS 3' },
+    { id: 'gpu5', name: 'AMD RX 7800 XT', brand: 'AMD', price: 479, specs: '16GB GDDR6, 1440p Gaming, FSR 3' },
+    { id: 'gpu6', name: 'NVIDIA RTX 4090', brand: 'NVIDIA', price: 1599, specs: '24GB GDDR6X, 4K Gaming, DLSS 3' },
+    { id: 'gpu7', name: 'AMD RX 7600', brand: 'AMD', price: 269, specs: '8GB GDDR6, 1080p Gaming, FSR 3' },
+    { id: 'gpu8', name: 'NVIDIA RTX 4060 Ti', brand: 'NVIDIA', price: 399, specs: '16GB GDDR6, 1440p Gaming, DLSS 3' }
   ],
   motherboard: [
     { id: 'mb1', name: 'ASUS B650-A WiFi', price: 179, specs: 'ATX, AM5 Socket, WiFi 6' },
