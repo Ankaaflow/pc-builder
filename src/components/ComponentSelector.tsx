@@ -14,7 +14,8 @@ import {
   allComponents,
   checkCompatibility
 } from '../utils/budgetAllocator';
-import { allLatestComponents } from '../data/latestComponents';
+import { allRealComponents } from '../data/realComponents';
+import { retailVerificationService } from '../services/retailVerification';
 import { redditService } from '../services/redditService';
 
 interface ComponentSelectorProps {
@@ -117,30 +118,35 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
   const getAlternativeComponents = async (category: keyof BuildConfiguration) => {
     const budget = budgetAllocation[category];
     
-    // Start with latest components database
-    let allCategoryComponents = [...allLatestComponents[category]];
+    // Start with verified real components database
+    let allCategoryComponents = [...allRealComponents[category]];
     
     try {
-      // Try to get additional Reddit components
+      // Try to get additional Reddit components and verify they exist
       const redditComponents = await redditService.getLatestComponentsForType(category, region);
       
       if (redditComponents.length > 0) {
-        // Merge Reddit components with latest components, avoiding duplicates
+        // Filter Reddit components to only include real ones
+        const verifiedRedditComponents = await retailVerificationService.filterRealComponents(redditComponents);
+        
+        // Merge with real components, avoiding duplicates
         const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
-        const newRedditComponents = redditComponents.filter(
+        const newVerifiedComponents = verifiedRedditComponents.filter(
           rc => !existingNames.has(rc.name.toLowerCase())
         );
-        allCategoryComponents = [...allCategoryComponents, ...newRedditComponents];
+        allCategoryComponents = [...allCategoryComponents, ...newVerifiedComponents];
       }
     } catch (error) {
       console.warn('Failed to fetch Reddit components for alternatives:', error);
     }
     
-    // If we need more options, add legacy components
+    // If we need more options, add legacy components (but verify they exist)
     if (allCategoryComponents.length < 8) {
       const legacyComponents = allComponents[category] || [];
+      const verifiedLegacyComponents = await retailVerificationService.filterRealComponents(legacyComponents);
+      
       const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
-      const newLegacyComponents = legacyComponents.filter(
+      const newLegacyComponents = verifiedLegacyComponents.filter(
         lc => !existingNames.has(lc.name.toLowerCase())
       );
       allCategoryComponents = [...allCategoryComponents, ...newLegacyComponents];
@@ -152,13 +158,13 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
       component.availability === 'in-stock'
     );
     
-    // Sort by latest components first, then by price
+    // Sort by real components first, then by price
     return filteredComponents.sort((a, b) => {
-      const aIsLatest = a.id.includes('latest');
-      const bIsLatest = b.id.includes('latest');
+      const aIsReal = a.id.includes('real');
+      const bIsReal = b.id.includes('real');
       
-      if (aIsLatest && !bIsLatest) return -1;
-      if (!aIsLatest && bIsLatest) return 1;
+      if (aIsReal && !bIsReal) return -1;
+      if (!aIsReal && bIsReal) return 1;
       
       return a.price[region] - b.price[region];
     });

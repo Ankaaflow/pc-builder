@@ -1,5 +1,6 @@
 import { Component, allComponents } from '../data/components';
-import { allLatestComponents } from '../data/latestComponents';
+import { allRealComponents } from '../data/realComponents';
+import { retailVerificationService } from '../services/retailVerification';
 import { redditService } from '../services/redditService';
 
 export type Region = 'US' | 'CA' | 'UK' | 'DE' | 'AU';
@@ -60,30 +61,35 @@ export async function findBestComponent(
   region: Region,
   requirements?: any
 ): Promise<Component | null> {
-  // Start with latest components database (2024-2025)
-  let allCategoryComponents = [...allLatestComponents[category]];
+  // Start with verified real components database
+  let allCategoryComponents = [...allRealComponents[category]];
   
-  // Try to get additional components from Reddit
+  // Try to get additional verified components from Reddit
   try {
     const redditComponents = await redditService.getLatestComponentsForType(category, region);
     
     if (redditComponents.length > 0) {
-      // Merge Reddit components with latest components, avoiding duplicates
+      // Filter Reddit components to only include real ones
+      const verifiedRedditComponents = await retailVerificationService.filterRealComponents(redditComponents);
+      
+      // Merge with real components, avoiding duplicates
       const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
-      const newRedditComponents = redditComponents.filter(
+      const newVerifiedComponents = verifiedRedditComponents.filter(
         rc => !existingNames.has(rc.name.toLowerCase())
       );
-      allCategoryComponents = [...allCategoryComponents, ...newRedditComponents];
+      allCategoryComponents = [...allCategoryComponents, ...newVerifiedComponents];
     }
   } catch (error) {
-    console.warn('Failed to fetch Reddit components, using latest database:', error);
+    console.warn('Failed to fetch Reddit components, using verified database:', error);
   }
 
-  // If latest components don't have enough options, add legacy components
+  // If we need more options, add legacy components (but verify they exist)
   if (allCategoryComponents.length < 5) {
     const legacyComponents = allComponents[category] || [];
+    const verifiedLegacyComponents = await retailVerificationService.filterRealComponents(legacyComponents);
+    
     const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
-    const newLegacyComponents = legacyComponents.filter(
+    const newLegacyComponents = verifiedLegacyComponents.filter(
       lc => !existingNames.has(lc.name.toLowerCase())
     );
     allCategoryComponents = [...allCategoryComponents, ...newLegacyComponents];
@@ -96,14 +102,14 @@ export async function findBestComponent(
   
   if (affordable.length === 0) return null;
   
-  // Sort by value (latest components first, then by price descending)
+  // Sort by value (real components first, then by price descending)
   affordable.sort((a, b) => {
-    // Prioritize latest components (they have different ID patterns)
-    const aIsLatest = a.id.includes('latest');
-    const bIsLatest = b.id.includes('latest');
+    // Prioritize real components (they have 'real' in ID)
+    const aIsReal = a.id.includes('real');
+    const bIsReal = b.id.includes('real');
     
-    if (aIsLatest && !bIsLatest) return -1;
-    if (!aIsLatest && bIsLatest) return 1;
+    if (aIsReal && !bIsReal) return -1;
+    if (!aIsReal && bIsReal) return 1;
     
     // Then sort by price descending (higher price = better performance assumption)
     return b.price[region] - a.price[region];
