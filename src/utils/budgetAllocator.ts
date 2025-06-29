@@ -1,7 +1,9 @@
-
 import { Component, allComponents } from '../data/components';
 
 export type Region = 'US' | 'CA' | 'UK' | 'DE' | 'AU';
+
+// Re-export Component and allComponents so they can be imported from this module
+export { Component, allComponents };
 
 export interface BudgetAllocation {
   cpu: number;
