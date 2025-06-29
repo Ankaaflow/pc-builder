@@ -1,5 +1,8 @@
 
 import React, { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Settings } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import BudgetSelector from '../components/BudgetSelector';
 import ComponentSelector from '../components/ComponentSelector';
 import { Region } from '../utils/budgetAllocator';
@@ -8,6 +11,7 @@ const Index = () => {
   const [currentStep, setCurrentStep] = useState<'budget' | 'components'>('budget');
   const [budget, setBudget] = useState<number>(0);
   const [region, setRegion] = useState<Region>('US');
+  const navigate = useNavigate();
 
   const handleBudgetSet = (selectedBudget: number, selectedRegion: Region) => {
     setBudget(selectedBudget);
@@ -20,7 +24,20 @@ const Index = () => {
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen relative">
+      {/* Admin Button - Top Right */}
+      <div className="absolute top-4 right-4 z-10">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate('/admin')}
+          className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
+        >
+          <Settings className="h-4 w-4" />
+          Admin
+        </Button>
+      </div>
+
       {currentStep === 'budget' ? (
         <BudgetSelector onBudgetSet={handleBudgetSet} />
       ) : (
