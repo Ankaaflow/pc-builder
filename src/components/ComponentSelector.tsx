@@ -17,6 +17,8 @@ import {
 import { allRealComponents } from '../data/realComponents';
 import { retailVerificationService } from '../services/retailVerification';
 import { redditService } from '../services/redditService';
+import { autonomousComponentDiscovery } from '../services/autonomousComponentDiscovery';
+import { realTimePriceTracker } from '../services/realTimePriceTracker';
 
 interface ComponentSelectorProps {
   budget: number;
@@ -118,8 +120,41 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
   const getAlternativeComponents = async (category: keyof BuildConfiguration) => {
     const budget = budgetAllocation[category];
     
-    // Start with verified real components database
-    let allCategoryComponents = [...allRealComponents[category]];
+    // Start with the most current components from autonomous discovery
+    let allCategoryComponents: any[] = [];
+    
+    try {
+      // Get latest autonomous discoveries (includes RTX 50 series, new CPUs, etc.)
+      const autonomousComponents = await autonomousComponentDiscovery.getLatestComponentsForCategory(category);
+      allCategoryComponents = [...autonomousComponents];
+      
+      // Update prices with real-time data
+      for (const component of allCategoryComponents) {
+        try {
+          const pricing = await realTimePriceTracker.getComponentPricing(component.name, region);
+          if (pricing) {
+            component.price[region] = pricing.lowestPrice;
+            component.trend = pricing.trending;
+            component.availability = pricing.retailers.some(r => r.availability === 'in-stock') ? 'in-stock' : 'limited';
+          }
+        } catch (error) {
+          console.warn(`Failed to update pricing for ${component.name}:`, error);
+        }
+      }
+      
+    } catch (error) {
+      console.warn('Autonomous discovery failed, falling back to verified components:', error);
+      allCategoryComponents = [...allRealComponents[category]];
+    }
+    
+    // Add verified real components if we don't have enough options
+    if (allCategoryComponents.length < 12) {
+      const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
+      const additionalComponents = allRealComponents[category].filter(
+        rc => !existingNames.has(rc.name.toLowerCase())
+      );
+      allCategoryComponents = [...allCategoryComponents, ...additionalComponents];
+    }
     
     try {
       // Try to get additional Reddit components and verify they exist
@@ -129,7 +164,7 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
         // Filter Reddit components to only include real ones
         const verifiedRedditComponents = await retailVerificationService.filterRealComponents(redditComponents);
         
-        // Merge with real components, avoiding duplicates
+        // Merge with existing components, avoiding duplicates
         const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
         const newVerifiedComponents = verifiedRedditComponents.filter(
           rc => !existingNames.has(rc.name.toLowerCase())
@@ -140,26 +175,22 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
       console.warn('Failed to fetch Reddit components for alternatives:', error);
     }
     
-    // If we need more options, add legacy components (but verify they exist)
-    if (allCategoryComponents.length < 8) {
-      const legacyComponents = allComponents[category] || [];
-      const verifiedLegacyComponents = await retailVerificationService.filterRealComponents(legacyComponents);
-      
-      const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
-      const newLegacyComponents = verifiedLegacyComponents.filter(
-        lc => !existingNames.has(lc.name.toLowerCase())
-      );
-      allCategoryComponents = [...allCategoryComponents, ...newLegacyComponents];
-    }
-    
     // Filter and sort components
     const filteredComponents = allCategoryComponents.filter(component => 
       component.price[region] <= budget * 1.5 && // Show components up to 150% of budget
       component.availability === 'in-stock'
     );
     
-    // Sort by real components first, then by price
+    // Sort by latest autonomous discoveries first, then by price
     return filteredComponents.sort((a, b) => {
+      // Prioritize autonomous discoveries (latest components like RTX 50 series)
+      const aIsAutonomous = a.id.includes('auto') || a.id.includes('retailer') || a.id.includes('news');
+      const bIsAutonomous = b.id.includes('auto') || b.id.includes('retailer') || b.id.includes('news');
+      
+      if (aIsAutonomous && !bIsAutonomous) return -1;
+      if (!aIsAutonomous && bIsAutonomous) return 1;
+      
+      // Then prioritize real verified components
       const aIsReal = a.id.includes('real');
       const bIsReal = b.id.includes('real');
       

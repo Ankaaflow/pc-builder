@@ -1,11 +1,12 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import BudgetSelector from '../components/BudgetSelector';
 import ComponentSelector from '../components/ComponentSelector';
 import { Region } from '../utils/budgetAllocator';
+import { autonomousSystemInitializer } from '../services/autonomousSystemInitializer';
 
 const Index = () => {
   const [currentStep, setCurrentStep] = useState<'budget' | 'components'>('budget');
@@ -22,6 +23,11 @@ const Index = () => {
   const handleBackToBudget = () => {
     setCurrentStep('budget');
   };
+
+  // Initialize autonomous systems when the app starts
+  useEffect(() => {
+    autonomousSystemInitializer.initialize();
+  }, []);
 
   return (
     <div className="min-h-screen relative">
