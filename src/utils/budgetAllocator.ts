@@ -1,4 +1,5 @@
 import { Component, allComponents } from '../data/components';
+import { allLatestComponents } from '../data/latestComponents';
 import { redditService } from '../services/redditService';
 
 export type Region = 'US' | 'CA' | 'UK' | 'DE' | 'AU';
@@ -59,36 +60,54 @@ export async function findBestComponent(
   region: Region,
   requirements?: any
 ): Promise<Component | null> {
-  // First try to get latest components from Reddit
+  // Start with latest components database (2024-2025)
+  let allCategoryComponents = [...allLatestComponents[category]];
+  
+  // Try to get additional components from Reddit
   try {
     const redditComponents = await redditService.getLatestComponentsForType(category, region);
     
     if (redditComponents.length > 0) {
-      const affordable = redditComponents.filter(
-        component => component.price[region] <= budget && component.availability === 'in-stock'
+      // Merge Reddit components with latest components, avoiding duplicates
+      const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
+      const newRedditComponents = redditComponents.filter(
+        rc => !existingNames.has(rc.name.toLowerCase())
       );
-      
-      if (affordable.length > 0) {
-        // Sort by confidence/value - Reddit components are already sorted by confidence
-        return affordable[0];
-      }
+      allCategoryComponents = [...allCategoryComponents, ...newRedditComponents];
     }
   } catch (error) {
-    console.warn('Failed to fetch Reddit components, falling back to hardcoded data:', error);
+    console.warn('Failed to fetch Reddit components, using latest database:', error);
   }
 
-  // Fallback to hardcoded components
-  const components = allComponents[category];
+  // If latest components don't have enough options, add legacy components
+  if (allCategoryComponents.length < 5) {
+    const legacyComponents = allComponents[category] || [];
+    const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
+    const newLegacyComponents = legacyComponents.filter(
+      lc => !existingNames.has(lc.name.toLowerCase())
+    );
+    allCategoryComponents = [...allCategoryComponents, ...newLegacyComponents];
+  }
   
   // Filter by budget and availability
-  const affordable = components.filter(
+  const affordable = allCategoryComponents.filter(
     component => component.price[region] <= budget && component.availability === 'in-stock'
   );
   
   if (affordable.length === 0) return null;
   
-  // Sort by value (performance per dollar - simplified as price descending for now)
-  affordable.sort((a, b) => b.price[region] - a.price[region]);
+  // Sort by value (latest components first, then by price descending)
+  affordable.sort((a, b) => {
+    // Prioritize latest components (they have different ID patterns)
+    const aIsLatest = a.id.includes('latest');
+    const bIsLatest = b.id.includes('latest');
+    
+    if (aIsLatest && !bIsLatest) return -1;
+    if (!aIsLatest && bIsLatest) return 1;
+    
+    // Then sort by price descending (higher price = better performance assumption)
+    return b.price[region] - a.price[region];
+  });
   
   return affordable[0];
 }

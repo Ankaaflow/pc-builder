@@ -14,6 +14,7 @@ import {
   allComponents,
   checkCompatibility
 } from '../utils/budgetAllocator';
+import { allLatestComponents } from '../data/latestComponents';
 import { redditService } from '../services/redditService';
 
 interface ComponentSelectorProps {
@@ -116,31 +117,51 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
   const getAlternativeComponents = async (category: keyof BuildConfiguration) => {
     const budget = budgetAllocation[category];
     
+    // Start with latest components database
+    let allCategoryComponents = [...allLatestComponents[category]];
+    
     try {
-      // First try to get Reddit components
+      // Try to get additional Reddit components
       const redditComponents = await redditService.getLatestComponentsForType(category, region);
       
       if (redditComponents.length > 0) {
-        const filteredReddit = redditComponents.filter(component => 
-          component.price[region] <= budget * 1.5 && // Show components up to 150% of budget
-          component.availability === 'in-stock'
+        // Merge Reddit components with latest components, avoiding duplicates
+        const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
+        const newRedditComponents = redditComponents.filter(
+          rc => !existingNames.has(rc.name.toLowerCase())
         );
-        
-        if (filteredReddit.length > 0) {
-          return filteredReddit.sort((a, b) => a.price[region] - b.price[region]);
-        }
+        allCategoryComponents = [...allCategoryComponents, ...newRedditComponents];
       }
     } catch (error) {
       console.warn('Failed to fetch Reddit components for alternatives:', error);
     }
     
-    // Fallback to hardcoded components
-    const categoryData = allComponents[category] || [];
+    // If we need more options, add legacy components
+    if (allCategoryComponents.length < 8) {
+      const legacyComponents = allComponents[category] || [];
+      const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
+      const newLegacyComponents = legacyComponents.filter(
+        lc => !existingNames.has(lc.name.toLowerCase())
+      );
+      allCategoryComponents = [...allCategoryComponents, ...newLegacyComponents];
+    }
     
-    return categoryData.filter(component => 
+    // Filter and sort components
+    const filteredComponents = allCategoryComponents.filter(component => 
       component.price[region] <= budget * 1.5 && // Show components up to 150% of budget
       component.availability === 'in-stock'
-    ).sort((a, b) => a.price[region] - b.price[region]);
+    );
+    
+    // Sort by latest components first, then by price
+    return filteredComponents.sort((a, b) => {
+      const aIsLatest = a.id.includes('latest');
+      const bIsLatest = b.id.includes('latest');
+      
+      if (aIsLatest && !bIsLatest) return -1;
+      if (!aIsLatest && bIsLatest) return 1;
+      
+      return a.price[region] - b.price[region];
+    });
   };
 
   const getCompatibilityStatus = (component: any, category: keyof BuildConfiguration) => {

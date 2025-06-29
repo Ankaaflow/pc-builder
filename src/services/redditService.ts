@@ -90,7 +90,10 @@ class RedditService {
     }
 
     try {
-      const response = await fetch(url, {
+      // Use a CORS proxy for Reddit API access
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+      
+      const response = await fetch(proxyUrl, {
         headers: {
           'User-Agent': 'PCBuilder/1.0 (Self-updating component discovery)'
         }
@@ -102,8 +105,11 @@ class RedditService {
           this.rateLimitDelay = Math.min(this.rateLimitDelay * 2, 30000);
           throw new Error('Rate limited - will retry with longer delay');
         }
-        throw new Error(`Reddit API responded with ${response.status}`);
+        throw new Error(`Proxy API responded with ${response.status}`);
       }
+
+      const proxyData = await response.json();
+      const redditData = JSON.parse(proxyData.contents);
 
       this.lastRequestTime = Date.now();
       this.requestCount++;
@@ -111,7 +117,7 @@ class RedditService {
       // Reduce delay on successful requests
       this.rateLimitDelay = Math.max(this.rateLimitDelay * 0.9, 3000);
       
-      return await response.json();
+      return redditData;
     } catch (error) {
       console.error('Reddit API request failed:', error);
       throw error;
@@ -660,17 +666,26 @@ class RedditService {
     cons: string[];
     redditScore: number;
   } | null> {
-    const insights = await this.getComponentInsights(componentName);
-    const mention = this.componentCache.get(this.normalizeComponentName(componentName));
+    try {
+      // Try to get real Reddit insights first
+      const insights = await this.getComponentInsights(componentName);
+      const mention = this.componentCache.get(this.normalizeComponentName(componentName));
+      
+      if (insights || mention) {
+        return {
+          insights: insights?.insights || [],
+          pros: insights?.pros || [],
+          cons: insights?.cons || [],
+          redditScore: mention?.redditScore || 0
+        };
+      }
+    } catch (error) {
+      console.warn('Reddit insights failed, falling back to mock data:', error);
+    }
     
-    if (!insights && !mention) return null;
-    
-    return {
-      insights: insights?.insights || [],
-      pros: insights?.pros || [],
-      cons: insights?.cons || [],
-      redditScore: mention?.redditScore || 0
-    };
+    // Fallback to mock insights service
+    const { componentInsightsService } = await import('./componentInsights');
+    return componentInsightsService.getComponentTooltip(componentName);
   }
 }
 
