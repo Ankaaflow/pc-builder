@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Cpu, HardDrive, MonitorSpeaker, MemoryStick, CircuitBoard, Zap, Box, Fan, Filter } from 'lucide-react';
+import PCLogo from '@/components/ui/pc-logo';
 
 // Enhanced components data with brands and more options
 const sampleComponents = {
@@ -139,9 +140,12 @@ const Index = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-8">
-              <h1 className="text-xl font-bold bg-gradient-to-r from-blue-500 to-purple-600 bg-clip-text text-transparent">
-                Build me a gaming PC
-              </h1>
+              <div className="flex items-center space-x-3">
+                <PCLogo size="md" />
+                <h1 className="text-xl font-bold bg-gradient-to-r from-blue-500 to-purple-600 bg-clip-text text-transparent">
+                  Build me a gaming PC
+                </h1>
+              </div>
               <nav className="hidden md:flex space-x-6">
                 <a href="#" className="text-gray-700 hover:text-blue-500 font-medium transition-colors">Home</a>
                 <a href="#" className="text-gray-700 hover:text-blue-500 font-medium transition-colors">Build PC</a>
