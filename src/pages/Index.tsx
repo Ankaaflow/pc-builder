@@ -10,6 +10,7 @@ import { autonomousSystemInitializer } from '../services/autonomousSystemInitial
 import '../utils/amazonLinkTester'; // Load Amazon link testing utilities
 import '../utils/regionDetection'; // Load region detection utilities
 import '../utils/asinValidator'; // Load ASIN validation utilities
+import '../utils/amazonLinkValidator'; // Load Amazon link validation utilities
 
 const Index = () => {
   const [currentStep, setCurrentStep] = useState<'budget' | 'components'>('budget');

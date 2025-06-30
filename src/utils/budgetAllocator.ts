@@ -5,6 +5,7 @@ import { redditService } from '../services/redditService';
 import { autonomousComponentDiscovery } from '../services/autonomousComponentDiscovery';
 import { realTimePriceTracker } from '../services/realTimePriceTracker';
 import { amazonProductMatcher } from '../services/amazonProductMatcher';
+import { getVerifiedASIN } from '../data/verifiedASINs';
 
 export type Region = 'US' | 'CA' | 'UK' | 'DE' | 'AU';
 
@@ -414,8 +415,8 @@ export function generateAffiliateLink(asin: string, region: Region): string {
     AU: 'amazon.com.au'
   };
   
-  // Generate the affiliate link
-  const link = `https://${domains[region]}/dp/${asin}?tag=${affiliateTags[region]}`;
+  // Generate the affiliate link using correct Amazon format
+  const link = `https://${domains[region]}/dp/${asin}/ref=nosim?tag=${affiliateTags[region]}`;
   
   console.log(`Generated Amazon link for ${region}: ${link}`);
   return link;
@@ -450,13 +451,22 @@ function generateGenericFallbackLink(region: Region): string {
 
 // Enhanced version that takes component name for better search
 export function generateSmartAffiliateLink(component: Component, region: Region): string {
-  // Check for invalid/placeholder ASINs first
+  // First, try to get a verified ASIN from our curated database
+  const verifiedASIN = getVerifiedASIN(component.name, region);
+  
+  if (verifiedASIN) {
+    console.log(`✅ Using verified ASIN for ${component.name}: ${verifiedASIN}`);
+    return generateAffiliateLink(verifiedASIN, region);
+  }
+
+  // Check for invalid/placeholder ASINs in component data
   if (!component.asin || component.asin === 'placeholder' || component.asin.startsWith('B0DJKL') || component.asin === '') {
-    console.warn(`Invalid ASIN detected for ${component.name}: ${component.asin}, falling back to search`);
+    console.warn(`❌ Invalid ASIN detected for ${component.name}: ${component.asin}, falling back to search`);
     return generateComponentSearchLink(component.name, region);
   }
 
-  // Use the standard affiliate link generation
+  // Use the component's ASIN, but warn that it's unverified
+  console.warn(`⚠️ Using unverified ASIN for ${component.name}: ${component.asin}`);
   return generateAffiliateLink(component.asin, region);
 }
 
