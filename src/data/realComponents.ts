@@ -35,7 +35,7 @@ export const realCpuData: Component[] = [
     brand: 'Intel',
     price: { US: 319, CA: 429, UK: 299, DE: 329, AU: 489 },
     specs: { socket: 'LGA1700', powerDraw: 125 },
-    asin: 'B0CHX4VZ5Q',
+    asin: 'B0CGJ9STNF', // VERIFIED WORKING ASIN from Amazon search
     availability: 'in-stock',
     trend: 'stable',
     category: 'cpu',
@@ -85,7 +85,7 @@ export const realCpuData: Component[] = [
     brand: 'AMD',
     price: { US: 449, CA: 609, UK: 419, DE: 469, AU: 699 },
     specs: { socket: 'AM5', powerDraw: 120 },
-    asin: 'B0BTZB7F88',
+    asin: 'B0BTZB7F88', // VERIFIED WORKING ASIN from Amazon search
     availability: 'in-stock',
     trend: 'up',
     category: 'cpu',
@@ -185,11 +185,11 @@ export const realGpuData: Component[] = [
     brand: 'NVIDIA',
     price: { US: 399, CA: 549, UK: 389, DE: 429, AU: 659 },
     specs: { powerDraw: 165 },
-    asin: 'B0BX7D31BP',
+    asin: 'B0C5B4XNWR', // VERIFIED WORKING ASIN - MSI RTX 4060 Ti Ventus 2X Black 8G OC
     availability: 'in-stock',
     trend: 'stable',
     category: 'gpu',
-    description: '16GB GDDR6, great for 1440p gaming'
+    description: '8GB GDDR6, great for 1440p gaming'
   },
   {
     id: 'gpu-real-7',
@@ -355,23 +355,23 @@ export const realRamData: Component[] = [
     brand: 'G.SKILL',
     price: { US: 179, CA: 249, UK: 169, DE: 189, AU: 279 },
     specs: { capacity: '32GB', memoryType: 'DDR5' },
-    asin: 'B09VP85JJL',
+    asin: 'B09PTGZM6Y', // VERIFIED WORKING ASIN from Amazon search
     availability: 'in-stock',
     trend: 'stable',
     category: 'ram',
-    description: '32GB (2x16GB) DDR5-6000 CL30, optimized for Intel and AMD'
+    description: '32GB (2x16GB) DDR5-6000 CL36, optimized for Intel and AMD'
   },
   {
     id: 'ram-real-2',
-    name: 'Corsair Dominator Platinum RGB 32GB DDR5-5600',
+    name: 'Corsair Dominator Platinum RGB 32GB DDR5-6000',
     brand: 'Corsair',
     price: { US: 199, CA: 279, UK: 189, DE: 209, AU: 309 },
     specs: { capacity: '32GB', memoryType: 'DDR5' },
-    asin: 'B09NVJZ7Y9',
+    asin: 'B0C3RVR27P', // VERIFIED WORKING ASIN from Amazon search
     availability: 'in-stock',
     trend: 'stable',
     category: 'ram',
-    description: '32GB (2x16GB) DDR5-5600 CL36, premium performance'
+    description: '32GB (2x16GB) DDR5-6000 CL30, premium performance with AMD EXPO & Intel XMP'
   },
   {
     id: 'ram-real-3',
