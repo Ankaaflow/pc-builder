@@ -179,13 +179,12 @@ class RedditService {
     
     try {
       // Fetch from multiple subreddits for better coverage
-      const [buildmeapcPosts, buildapcPosts, buildapcformePosts] = await Promise.all([
+      const [buildmeapcPosts, buildapcPosts] = await Promise.all([
         this.fetchLatestPosts('buildmeapc', 100),
-        this.fetchLatestPosts('buildapc', 50),
-        this.fetchLatestPosts('buildapcforme', 75)
+        this.fetchLatestPosts('buildapc', 50)
       ]);
 
-      const allPosts = [...buildmeapcPosts, ...buildapcPosts, ...buildapcformePosts]
+      const allPosts = [...buildmeapcPosts, ...buildapcPosts]
         .filter(post => post.created > (now / 1000) - (7 * 24 * 60 * 60)) // Last 7 days only
         .sort((a, b) => b.created - a.created); // Most recent first
 
