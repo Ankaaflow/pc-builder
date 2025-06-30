@@ -14,11 +14,13 @@ import {
   allComponents,
   checkCompatibility
 } from '../utils/budgetAllocator';
+import { Component } from '../data/components';
 import { allRealComponents } from '../data/realComponents';
 import { retailVerificationService } from '../services/retailVerification';
 import { redditService } from '../services/redditService';
 import { autonomousComponentDiscovery } from '../services/autonomousComponentDiscovery';
 import { realTimePriceTracker } from '../services/realTimePriceTracker';
+import { intelligentBudgetOptimizer } from '../services/intelligentBudgetOptimizer';
 
 interface ComponentSelectorProps {
   budget: number;
@@ -44,7 +46,7 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
   
   const [activeCategory, setActiveCategory] = useState<keyof BuildConfiguration>('cpu');
   const [isLoading, setIsLoading] = useState(true);
-  const [currentCategoryComponents, setCurrentCategoryComponents] = useState<any[]>([]);
+  const [currentCategoryComponents, setCurrentCategoryComponents] = useState<Component[]>([]);
 
   const budgetAllocation = calculateBudgetAllocation(budget);
 
@@ -71,24 +73,48 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
   };
 
   useEffect(() => {
-    // Generate initial recommended build
-    const loadRecommendedBuild = async () => {
+    // Generate initial optimized build using intelligent budget optimizer
+    const loadOptimizedBuild = async () => {
       try {
-        const recommendedBuild = await generateRecommendedBuild(budget, region);
-        setBuild(recommendedBuild);
+        console.log(`🎯 Generating optimized build for $${budget} budget...`);
+        const optimizedResult = await intelligentBudgetOptimizer.optimizeBuildForBudget(budget, region);
+        
+        setBuild(optimizedResult.build);
+        
+        // Show optimization results
+        console.log(`✅ Build optimized: $${optimizedResult.totalCost} (${optimizedResult.budgetUtilization.toFixed(1)}% budget used)`);
+        console.log(`📈 Performance Score: ${optimizedResult.performanceScore}/100`);
+        console.log(`🔧 Build Complete: ${optimizedResult.isComplete ? 'Yes' : 'No'}`);
+        
+        if (optimizedResult.compatibilityIssues.length > 0) {
+          console.warn('⚠️ Compatibility issues:', optimizedResult.compatibilityIssues);
+        }
+        
+        if (optimizedResult.optimizationNotes.length > 0) {
+          console.log('📝 Optimization notes:', optimizedResult.optimizationNotes);
+        }
         
         // Load components for the initial category
         const components = await getAlternativeComponents(activeCategory);
         setCurrentCategoryComponents(components);
       } catch (error) {
-        console.error('Failed to generate recommended build:', error);
-        // You could add error state handling here
+        console.error('Failed to generate optimized build:', error);
+        // Fallback to original method
+        try {
+          const recommendedBuild = await generateRecommendedBuild(budget, region);
+          setBuild(recommendedBuild);
+          
+          const components = await getAlternativeComponents(activeCategory);
+          setCurrentCategoryComponents(components);
+        } catch (fallbackError) {
+          console.error('Fallback build generation also failed:', fallbackError);
+        }
       } finally {
         setIsLoading(false);
       }
     };
     
-    loadRecommendedBuild();
+    loadOptimizedBuild();
   }, [budget, region]);
 
   // Load components when category changes
@@ -103,7 +129,7 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
     }
   }, [activeCategory, budget, region, isLoading]);
 
-  const handleComponentSelect = (category: keyof BuildConfiguration, component: any) => {
+  const handleComponentSelect = (category: keyof BuildConfiguration, component: Component) => {
     setBuild(prev => ({
       ...prev,
       [category]: component
@@ -121,7 +147,7 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
     const budget = budgetAllocation[category];
     
     // Start with the most current components from autonomous discovery
-    let allCategoryComponents: any[] = [];
+    let allCategoryComponents: Component[] = [];
     
     try {
       // Get latest autonomous discoveries (includes RTX 50 series, new CPUs, etc.)
@@ -201,7 +227,7 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
     });
   };
 
-  const getCompatibilityStatus = (component: any, category: keyof BuildConfiguration) => {
+  const getCompatibilityStatus = (component: Component, category: keyof BuildConfiguration) => {
     const testBuild = { ...build, [category]: component };
     const compatibility = checkCompatibility(testBuild);
     
@@ -215,7 +241,8 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
           <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-lg text-gray-600">Generating your recommended build...</p>
+          <p className="text-lg text-gray-600">Optimizing your build with latest components...</p>
+          <p className="text-sm text-gray-500 mt-2">Analyzing performance, compatibility, and value</p>
         </div>
       </div>
     );
