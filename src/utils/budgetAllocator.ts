@@ -7,6 +7,7 @@ import { realTimePriceTracker } from '../services/realTimePriceTracker';
 import { amazonProductMatcher } from '../services/amazonProductMatcher';
 import { getVerifiedASIN } from '../data/verifiedASINs';
 import { amazonASINScraper } from '../services/amazonASINScraper';
+import { realAmazonScraper } from '../services/realAmazonScraper';
 
 export type Region = 'US' | 'CA' | 'UK' | 'DE' | 'AU';
 
@@ -450,20 +451,32 @@ function generateGenericFallbackLink(region: Region): string {
   return searchLink;
 }
 
-// Enhanced version that uses dynamic ASIN scraping
+// Enhanced version that uses real Amazon scraping
 export async function generateSmartAffiliateLink(component: Component, region: Region): Promise<string> {
   console.log(`🔗 Generating smart affiliate link for ${component.name} in ${region}...`);
 
-  // First, try to get a dynamically scraped ASIN (most current)
+  // First, try to get a real scraped ASIN from Amazon search (most current and accurate)
+  try {
+    const realScrapedASIN = await realAmazonScraper.getBestRealASIN(component.name, region);
+    
+    if (realScrapedASIN) {
+      console.log(`🕷️ Using real scraped ASIN for ${component.name}: ${realScrapedASIN}`);
+      return generateAffiliateLink(realScrapedASIN, region);
+    }
+  } catch (error) {
+    console.warn(`⚠️ Real Amazon scraping failed for ${component.name}:`, error);
+  }
+
+  // Fallback to simulated scraper
   try {
     const scrapedASIN = await amazonASINScraper.getBestASIN(component.name, component.category, region);
     
     if (scrapedASIN) {
-      console.log(`🤖 Using scraped ASIN for ${component.name}: ${scrapedASIN}`);
+      console.log(`🤖 Using fallback scraped ASIN for ${component.name}: ${scrapedASIN}`);
       return generateAffiliateLink(scrapedASIN, region);
     }
   } catch (error) {
-    console.warn(`⚠️ ASIN scraping failed for ${component.name}:`, error);
+    console.warn(`⚠️ Fallback ASIN scraping failed for ${component.name}:`, error);
   }
 
   // Fallback to verified static ASIN database

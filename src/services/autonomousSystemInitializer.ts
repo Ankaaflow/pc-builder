@@ -3,6 +3,7 @@
 
 import { autonomousComponentDiscovery } from './autonomousComponentDiscovery';
 import { realTimePriceTracker } from './realTimePriceTracker';
+import { autonomousASINService } from './autonomousASINService';
 
 class AutonomousSystemInitializer {
   private isInitialized = false;
@@ -27,6 +28,10 @@ class AutonomousSystemInitializer {
       console.log('💰 Starting price monitoring...');
       realTimePriceTracker.startPriceMonitoring();
 
+      // Start autonomous ASIN discovery service
+      console.log('🔗 Starting ASIN discovery service...');
+      autonomousASINService.startDiscovery();
+
       this.isInitialized = true;
       
       console.log('✅ Autonomous systems fully initialized!');
@@ -35,6 +40,7 @@ class AutonomousSystemInitializer {
       console.log('   • Update prices every 30 minutes');
       console.log('   • Scan for component releases every 60 minutes');
       console.log('   • Verify component availability in real-time');
+      console.log('   • Update Amazon ASINs every 4 hours based on popularity');
 
     } catch (error) {
       console.error('❌ Failed to initialize autonomous systems:', error);

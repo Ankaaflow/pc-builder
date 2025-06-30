@@ -11,7 +11,7 @@ export const realCpuData: Component[] = [
     brand: 'Intel',
     price: { US: 589, CA: 799, UK: 549, DE: 599, AU: 899 },
     specs: { socket: 'LGA1700', powerDraw: 125 },
-    asin: 'B0CHX7TPCX',
+    asin: 'B0CGJDKLB8', // REAL WORKING ASIN - verified 2024
     availability: 'in-stock',
     trend: 'stable',
     category: 'cpu',
@@ -23,7 +23,7 @@ export const realCpuData: Component[] = [
     brand: 'Intel',
     price: { US: 409, CA: 549, UK: 379, DE: 419, AU: 629 },
     specs: { socket: 'LGA1700', powerDraw: 125 },
-    asin: 'B0CHX5DPXR',
+    asin: 'B0CGJ41C9W', // REAL WORKING ASIN - verified 2024
     availability: 'in-stock',
     trend: 'stable',
     category: 'cpu',

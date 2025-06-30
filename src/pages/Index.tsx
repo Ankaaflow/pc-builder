@@ -11,6 +11,7 @@ import '../utils/amazonLinkTester'; // Load Amazon link testing utilities
 import '../utils/regionDetection'; // Load region detection utilities
 import '../utils/asinValidator'; // Load ASIN validation utilities
 import '../utils/amazonLinkValidator'; // Load Amazon link validation utilities
+import '../utils/amazonLinkDebugger'; // Load Amazon link debugging utilities
 import '../services/asinUpdateService'; // Load automated ASIN update service
 
 const Index = () => {
