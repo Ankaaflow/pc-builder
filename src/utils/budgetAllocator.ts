@@ -118,15 +118,19 @@ export async function findBestComponent(
     console.warn('Failed to fetch Reddit components:', error);
   }
   
-  // Filter by budget and availability
-  const affordable = allCategoryComponents.filter(
-    component => component.price[region] <= budget && component.availability === 'in-stock'
+  // Filter by availability first - we need in-stock components
+  const available = allCategoryComponents.filter(
+    component => component.availability === 'in-stock'
   );
   
-  if (affordable.length === 0) return null;
+  if (available.length === 0) return null;
   
-  // Sort by value (autonomous discoveries first, then by price descending)
-  affordable.sort((a, b) => {
+  // Split into affordable and over-budget components
+  const affordable = available.filter(component => component.price[region] <= budget);
+  const overBudget = available.filter(component => component.price[region] > budget);
+  
+  // Sort function for prioritizing components
+  const sortComponents = (a: Component, b: Component) => {
     // Prioritize autonomous discoveries (latest components)
     const aIsAutonomous = a.id.includes('auto') || a.id.includes('retailer') || a.id.includes('news');
     const bIsAutonomous = b.id.includes('auto') || b.id.includes('retailer') || b.id.includes('news');
@@ -143,9 +147,18 @@ export async function findBestComponent(
     
     // Finally sort by price descending (higher price = better performance assumption)
     return b.price[region] - a.price[region];
-  });
+  };
   
-  return affordable[0];
+  // If we have affordable options, return the best one within budget
+  if (affordable.length > 0) {
+    affordable.sort(sortComponents);
+    return affordable[0];
+  }
+  
+  // If no affordable options, return the cheapest available component
+  // This ensures complete builds even when over budget
+  overBudget.sort((a, b) => a.price[region] - b.price[region]); // Sort by price ascending for cheapest
+  return overBudget[0];
 }
 
 export function checkCompatibility(build: BuildConfiguration): {
@@ -223,7 +236,7 @@ export async function generateRecommendedBuild(
   region: Region
 ): Promise<BuildConfiguration> {
   // First try to get budget-specific recommendations from r/buildapcforme
-  let budgetSpecificComponents: Component[] = [];
+  const budgetSpecificComponents: Component[] = [];
   
   try {
     const budgetMentions = await redditService.discoverComponentsForBudget(budget);
@@ -276,16 +289,29 @@ async function findBestComponentWithBudgetPreference(
   requirements?: any
 ): Promise<Component | null> {
   // First try to find from budget-specific recommendations
-  const budgetSpecific = budgetSpecificComponents
-    .filter(c => c.category === category && c.price[region] <= budget && c.availability === 'in-stock')
-    .sort((a, b) => b.price[region] - a.price[region]); // Higher price = better performance assumption
+  const budgetSpecificAvailable = budgetSpecificComponents
+    .filter(c => c.category === category && c.availability === 'in-stock');
   
-  if (budgetSpecific.length > 0) {
-    console.log(`Using budget-specific ${category} recommendation: ${budgetSpecific[0].name}`);
-    return budgetSpecific[0];
+  if (budgetSpecificAvailable.length > 0) {
+    // Split into affordable and over-budget budget-specific components
+    const budgetSpecificAffordable = budgetSpecificAvailable
+      .filter(c => c.price[region] <= budget)
+      .sort((a, b) => b.price[region] - a.price[region]); // Higher price = better performance
+    
+    if (budgetSpecificAffordable.length > 0) {
+      console.log(`Using budget-specific ${category} recommendation: ${budgetSpecificAffordable[0].name}`);
+      return budgetSpecificAffordable[0];
+    }
+    
+    // If no affordable budget-specific options, use cheapest budget-specific component
+    const cheapestBudgetSpecific = budgetSpecificAvailable
+      .sort((a, b) => a.price[region] - b.price[region])[0]; // Cheapest first
+    
+    console.log(`Using cheapest budget-specific ${category} recommendation (over budget): ${cheapestBudgetSpecific.name}`);
+    return cheapestBudgetSpecific;
   }
   
-  // Fallback to standard component discovery
+  // Fallback to standard component discovery (which now also allows over-budget)
   return findBestComponent(category, budget, region, requirements);
 }
 

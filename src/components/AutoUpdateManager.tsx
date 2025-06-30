@@ -277,7 +277,7 @@ const AutoUpdateManager: React.FC = () => {
               <div>
                 <p className="text-sm font-medium">Reddit Sources</p>
                 <p className="text-2xl font-bold">3</p>
-                <p className="text-xs text-gray-500">buildapc, buildmeapc, pcmasterrace</p>
+                <p className="text-xs text-gray-500">buildapc, buildmeapc, buildapcforme</p>
               </div>
             </div>
           </CardContent>
