@@ -52,6 +52,14 @@ class RedditService {
   private lastCacheUpdate = 0;
   private cacheUpdateInterval = 15 * 60 * 1000; // 15 minutes
 
+  // Budget extraction patterns for buildapcforme
+  private budgetPatterns = [
+    /\$?(\d{3,5})\s*(?:budget|build|pc|gaming|rig)/gi,
+    /budget\s*(?:of|is|:)?\s*\$?(\d{3,5})/gi,
+    /looking\s*(?:for|at)\s*\$?(\d{3,5})/gi,
+    /around\s*\$?(\d{3,5})/gi
+  ];
+
   // Dynamic component patterns that learn from Reddit
   private componentPatterns = {
     gpu: [
@@ -179,13 +187,20 @@ class RedditService {
     
     try {
       // Fetch from multiple subreddits for better coverage
-      const [buildmeapcPosts, buildapcPosts] = await Promise.all([
+      const [buildmeapcPosts, buildapcPosts, buildapcformePosts] = await Promise.all([
         this.fetchLatestPosts('buildmeapc', 100),
-        this.fetchLatestPosts('buildapc', 50)
+        this.fetchLatestPosts('buildapc', 50),
+        this.fetchLatestPosts('buildapcforme', 75)
       ]);
 
-      const allPosts = [...buildmeapcPosts, ...buildapcPosts]
-        .filter(post => post.created > (now / 1000) - (7 * 24 * 60 * 60)) // Last 7 days only
+      // Different time filters for different subreddits
+      const recentPosts = [...buildmeapcPosts, ...buildapcPosts]
+        .filter(post => post.created > (now / 1000) - (7 * 24 * 60 * 60)); // Last 7 days
+      
+      const filteredBuildapcformePosts = buildapcformePosts
+        .filter(post => post.created > (now / 1000) - (365 * 24 * 60 * 60)); // Last 1 year for buildapcforme
+      
+      const allPosts = [...recentPosts, ...filteredBuildapcformePosts]
         .sort((a, b) => b.created - a.created); // Most recent first
 
       console.log(`Processing ${allPosts.length} recent posts...`);
@@ -211,9 +226,13 @@ class RedditService {
     }
   }
 
-  private async parseComponentMentions(post: RedditPost): Promise<ComponentMention[]> {
+  private async parseComponentMentions(post: RedditPost, userBudget?: number): Promise<ComponentMention[]> {
     const mentions: ComponentMention[] = [];
     const fullText = `${post.title} ${post.selftext}`.toLowerCase();
+    
+    // Extract budget from buildapcforme posts
+    const postBudget = this.extractBudgetFromPost(fullText);
+    const budgetMatch = userBudget && postBudget ? this.calculateBudgetMatch(userBudget, postBudget) : null;
     
     // Parse each component type
     for (const [type, patterns] of Object.entries(this.componentPatterns)) {
@@ -225,7 +244,7 @@ class RedditService {
             const existing = mentions.find(m => m.normalizedName === normalizedName);
             
             if (!existing) {
-              const confidence = this.calculateConfidence(post, match, fullText);
+              const confidence = this.calculateConfidence(post, match, fullText, budgetMatch);
               const isRecommended = this.isRecommendation(fullText, match);
               const reasons = this.extractReasons(fullText, match);
               
@@ -399,7 +418,49 @@ class RedditService {
                .replace(/[^\w\s-]/g, '');
   }
 
-  private calculateConfidence(post: RedditPost, component: string, fullText: string): number {
+  private extractBudgetFromPost(text: string): number | null {
+    for (const pattern of this.budgetPatterns) {
+      pattern.lastIndex = 0; // Reset regex state
+      const match = pattern.exec(text);
+      if (match && match[1]) {
+        const budget = parseInt(match[1], 10);
+        if (budget >= 300 && budget <= 10000) { // Reasonable budget range
+          return budget;
+        }
+      }
+    }
+    return null;
+  }
+
+  private calculateBudgetMatch(userBudget: number, postBudget: number): {
+    isExactMatch: boolean;
+    isCloseMatch: boolean;
+    matchScore: number;
+  } {
+    const difference = Math.abs(userBudget - postBudget);
+    const isExactMatch = difference <= 50; // Within $50
+    const isCloseMatch = difference <= 100; // Within $100
+    
+    // Calculate match score (1.0 = perfect match, 0.0 = no match)
+    let matchScore = 0;
+    if (difference <= 50) {
+      matchScore = 1.0;
+    } else if (difference <= 100) {
+      matchScore = 0.8;
+    } else if (difference <= 200) {
+      matchScore = 0.5;
+    } else if (difference <= 500) {
+      matchScore = 0.2;
+    }
+    
+    return { isExactMatch, isCloseMatch, matchScore };
+  }
+
+  private calculateConfidence(post: RedditPost, component: string, fullText: string, budgetMatch?: {
+    isExactMatch: boolean;
+    isCloseMatch: boolean;
+    matchScore: number;
+  } | null): number {
     let confidence = 0.3; // Base confidence
 
     // Post score factor
@@ -409,6 +470,20 @@ class RedditService {
 
     // Subreddit factor
     if (post.subreddit === 'buildmeapc') confidence += 0.2;
+    if (post.subreddit === 'buildapcforme') {
+      confidence += 0.15; // Base boost for buildapcforme
+      
+      // Budget matching bonus for buildapcforme
+      if (budgetMatch) {
+        if (budgetMatch.isExactMatch) {
+          confidence += 0.3; // High boost for exact budget match
+        } else if (budgetMatch.isCloseMatch) {
+          confidence += 0.2; // Medium boost for close budget match
+        } else {
+          confidence += budgetMatch.matchScore * 0.15; // Scaled boost based on match score
+        }
+      }
+    }
 
     // Context factors
     const context = this.extractContext(fullText, component);
@@ -498,7 +573,7 @@ class RedditService {
     return components;
   }
 
-  private async convertMentionToComponent(mention: ComponentMention, region: Region): Promise<Component | null> {
+  async convertMentionToComponent(mention: ComponentMention, region: Region): Promise<Component | null> {
     try {
       const insights = await this.getComponentInsights(mention.name);
       
@@ -657,6 +732,130 @@ class RedditService {
     }
 
     return specs;
+  }
+
+  // Budget-specific component discovery for buildapcforme
+  async discoverComponentsForBudget(userBudget: number): Promise<ComponentMention[]> {
+    const now = Date.now();
+    
+    console.log(`Discovering components for $${userBudget} budget from r/buildapcforme...`);
+    
+    try {
+      // Fetch buildapcforme posts with 1-year timeframe
+      const buildapcformePosts = await this.fetchLatestPosts('buildapcforme', 200);
+      
+      const relevantPosts = buildapcformePosts
+        .filter(post => post.created > (now / 1000) - (365 * 24 * 60 * 60)) // Last 1 year
+        .filter(post => {
+          const postBudget = this.extractBudgetFromPost(`${post.title} ${post.selftext}`.toLowerCase());
+          if (!postBudget) return false;
+          
+          const budgetMatch = this.calculateBudgetMatch(userBudget, postBudget);
+          return budgetMatch.isCloseMatch; // Only include posts within ±$100
+        })
+        .sort((a, b) => {
+          const aBudget = this.extractBudgetFromPost(`${a.title} ${a.selftext}`.toLowerCase()) || 0;
+          const bBudget = this.extractBudgetFromPost(`${b.title} ${b.selftext}`.toLowerCase()) || 0;
+          
+          const aMatch = this.calculateBudgetMatch(userBudget, aBudget);
+          const bMatch = this.calculateBudgetMatch(userBudget, bBudget);
+          
+          // Sort by budget match quality first, then by post score
+          if (aMatch.matchScore !== bMatch.matchScore) {
+            return bMatch.matchScore - aMatch.matchScore;
+          }
+          return b.score - a.score;
+        })
+        .slice(0, 50); // Top 50 most relevant posts
+
+      console.log(`Found ${relevantPosts.length} budget-relevant posts for $${userBudget}`);
+
+      const mentions: ComponentMention[] = [];
+      
+      for (const post of relevantPosts) {
+        const postMentions = await this.parseComponentMentions(post, userBudget);
+        mentions.push(...postMentions);
+        
+        // Also fetch and parse comments for more comprehensive recommendations
+        const comments = await this.fetchPostComments(post.permalink);
+        for (const comment of comments.slice(0, 5)) { // Top 5 comments per post
+          const commentMentions = await this.parseComponentMentionsFromText(
+            comment.body, 
+            post.subreddit,
+            comment.score,
+            userBudget
+          );
+          mentions.push(...commentMentions);
+        }
+      }
+
+      console.log(`Discovered ${mentions.length} budget-specific component mentions`);
+      return mentions;
+      
+    } catch (error) {
+      console.error('Failed to discover budget-specific components:', error);
+      return [];
+    }
+  }
+
+  private async parseComponentMentionsFromText(
+    text: string,
+    subreddit: string,
+    score: number,
+    userBudget?: number
+  ): Promise<ComponentMention[]> {
+    const mentions: ComponentMention[] = [];
+    const fullText = text.toLowerCase();
+    
+    // Extract budget and calculate match
+    const postBudget = this.extractBudgetFromPost(fullText);
+    const budgetMatch = userBudget && postBudget ? this.calculateBudgetMatch(userBudget, postBudget) : null;
+    
+    // Parse each component type
+    for (const [type, patterns] of Object.entries(this.componentPatterns)) {
+      for (const pattern of patterns) {
+        const matches = fullText.match(pattern);
+        if (matches) {
+          for (const match of matches) {
+            const normalizedName = this.normalizeComponentName(match);
+            const existing = mentions.find(m => m.normalizedName === normalizedName);
+            
+            if (!existing) {
+              // Create mock post object for confidence calculation
+              const mockPost = {
+                title: '',
+                selftext: '',
+                url: '',
+                score,
+                created: Date.now() / 1000,
+                author: 'reddit_user',
+                subreddit,
+                permalink: ''
+              };
+              
+              const confidence = this.calculateConfidence(mockPost, match, fullText, budgetMatch);
+              const isRecommended = this.isRecommendation(fullText, match);
+              const reasons = this.extractReasons(fullText, match);
+              
+              mentions.push({
+                name: match.trim(),
+                normalizedName,
+                type: type as ComponentMention['type'],
+                confidence,
+                context: this.extractContext(fullText, match),
+                recommended: isRecommended,
+                reasons,
+                redditScore: score,
+                firstSeen: Date.now(),
+                lastUpdated: Date.now()
+              });
+            }
+          }
+        }
+      }
+    }
+
+    return mentions;
   }
 
   // Public method to get tooltip data

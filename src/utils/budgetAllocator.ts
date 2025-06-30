@@ -222,18 +222,36 @@ export async function generateRecommendedBuild(
   budget: number,
   region: Region
 ): Promise<BuildConfiguration> {
+  // First try to get budget-specific recommendations from r/buildapcforme
+  let budgetSpecificComponents: Component[] = [];
+  
+  try {
+    const budgetMentions = await redditService.discoverComponentsForBudget(budget);
+    console.log(`Found ${budgetMentions.length} budget-specific component mentions for $${budget}`);
+    
+    // Convert mentions to components for budget-specific matching
+    for (const mention of budgetMentions.filter(m => m.confidence > 0.6)) {
+      const component = await redditService.convertMentionToComponent(mention, region);
+      if (component) {
+        budgetSpecificComponents.push(component);
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to get budget-specific components, using standard allocation:', error);
+  }
+
   const allocation = calculateBudgetAllocation(budget);
   
-  // Build components asynchronously to get Reddit recommendations
+  // Build components asynchronously, prioritizing budget-specific recommendations
   const [cpu, gpu, motherboard, ram, storage, cooler, psu, caseComponent] = await Promise.all([
-    findBestComponent('cpu', allocation.cpu, region),
-    findBestComponent('gpu', allocation.gpu, region),
-    findBestComponent('motherboard', allocation.motherboard, region),
-    findBestComponent('ram', allocation.ram, region),
-    findBestComponent('storage', allocation.storage, region),
-    findBestComponent('cooler', allocation.cooler, region),
-    findBestComponent('psu', allocation.psu, region),
-    findBestComponent('case', allocation.case, region)
+    findBestComponentWithBudgetPreference('cpu', allocation.cpu, region, budgetSpecificComponents),
+    findBestComponentWithBudgetPreference('gpu', allocation.gpu, region, budgetSpecificComponents),
+    findBestComponentWithBudgetPreference('motherboard', allocation.motherboard, region, budgetSpecificComponents),
+    findBestComponentWithBudgetPreference('ram', allocation.ram, region, budgetSpecificComponents),
+    findBestComponentWithBudgetPreference('storage', allocation.storage, region, budgetSpecificComponents),
+    findBestComponentWithBudgetPreference('cooler', allocation.cooler, region, budgetSpecificComponents),
+    findBestComponentWithBudgetPreference('psu', allocation.psu, region, budgetSpecificComponents),
+    findBestComponentWithBudgetPreference('case', allocation.case, region, budgetSpecificComponents)
   ]);
   
   const build: BuildConfiguration = {
@@ -248,6 +266,27 @@ export async function generateRecommendedBuild(
   };
   
   return build;
+}
+
+async function findBestComponentWithBudgetPreference(
+  category: keyof typeof allComponents,
+  budget: number,
+  region: Region,
+  budgetSpecificComponents: Component[],
+  requirements?: any
+): Promise<Component | null> {
+  // First try to find from budget-specific recommendations
+  const budgetSpecific = budgetSpecificComponents
+    .filter(c => c.category === category && c.price[region] <= budget && c.availability === 'in-stock')
+    .sort((a, b) => b.price[region] - a.price[region]); // Higher price = better performance assumption
+  
+  if (budgetSpecific.length > 0) {
+    console.log(`Using budget-specific ${category} recommendation: ${budgetSpecific[0].name}`);
+    return budgetSpecific[0];
+  }
+  
+  // Fallback to standard component discovery
+  return findBestComponent(category, budget, region, requirements);
 }
 
 export function calculateTotalPrice(build: BuildConfiguration, region: Region): number {
