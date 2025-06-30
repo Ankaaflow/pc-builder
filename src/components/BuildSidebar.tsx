@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { CheckCircle, AlertTriangle, ExternalLink } from 'lucide-react';
-import { BuildConfiguration, Region, calculateTotalPrice, checkCompatibility, generateAffiliateLink } from '../utils/budgetAllocator';
+import { BuildConfiguration, Region, calculateTotalPrice, checkCompatibility, generateSmartAffiliateLink } from '../utils/budgetAllocator';
 
 interface BuildSidebarProps {
   build: BuildConfiguration;
@@ -158,7 +158,7 @@ const BuildSidebar: React.FC<BuildSidebarProps> = ({
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => window.open(generateAffiliateLink(component.asin, region), '_blank')}
+                        onClick={() => window.open(generateSmartAffiliateLink(component, region), '_blank')}
                         className="h-6 w-6 p-0"
                       >
                         <ExternalLink className="h-3 w-3" />

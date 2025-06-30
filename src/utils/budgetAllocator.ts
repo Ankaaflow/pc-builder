@@ -390,12 +390,20 @@ export function calculateTotalPrice(build: BuildConfiguration, region: Region): 
 }
 
 export function generateAffiliateLink(asin: string, region: Region): string {
+  // Check for invalid/placeholder ASINs first
+  if (!asin || asin === 'placeholder' || asin.startsWith('B0DJKL') || asin === '') {
+    console.warn(`Invalid ASIN detected: ${asin}, falling back to search`);
+    // We need the component name for search, but this function only has ASIN
+    // Return a generic search instead
+    return generateGenericFallbackLink(region);
+  }
+
   const affiliateTags = {
     US: 'pcbuilder-20',
-    CA: 'pcbuilder-20',
+    CA: 'pcbuilderCA-20',  // Fixed: Proper Canadian affiliate tag
     UK: 'pcbuilder-21',
-    DE: 'pcbuilder-21',
-    AU: 'pcbuilder-20'
+    DE: 'pcbuilder-21', 
+    AU: 'pcbuilderAU-20'   // Fixed: Proper Australian affiliate tag
   };
   
   const domains = {
@@ -406,5 +414,75 @@ export function generateAffiliateLink(asin: string, region: Region): string {
     AU: 'amazon.com.au'
   };
   
-  return `https://${domains[region]}/dp/${asin}?tag=${affiliateTags[region]}`;
+  // Generate the affiliate link
+  const link = `https://${domains[region]}/dp/${asin}?tag=${affiliateTags[region]}`;
+  
+  console.log(`Generated Amazon link for ${region}: ${link}`);
+  return link;
+}
+
+// Fallback for invalid ASINs - redirect to Amazon PC components search
+function generateGenericFallbackLink(region: Region): string {
+  const domains = {
+    US: 'amazon.com',
+    CA: 'amazon.ca', 
+    UK: 'amazon.co.uk',
+    DE: 'amazon.de',
+    AU: 'amazon.com.au'
+  };
+  
+  const affiliateTags = {
+    US: 'pcbuilder-20',
+    CA: 'pcbuilderCA-20',
+    UK: 'pcbuilder-21',
+    DE: 'pcbuilder-21',
+    AU: 'pcbuilderAU-20'
+  };
+
+  // Generic PC components search
+  const searchQuery = encodeURIComponent('pc components computer parts');
+  
+  const searchLink = `https://${domains[region]}/s?k=${searchQuery}&tag=${affiliateTags[region]}&ref=sr_st_relevancerank`;
+  
+  console.log(`Using generic fallback search for invalid ASIN on ${region}: ${searchLink}`);
+  return searchLink;
+}
+
+// Enhanced version that takes component name for better search
+export function generateSmartAffiliateLink(component: Component, region: Region): string {
+  // Check for invalid/placeholder ASINs first
+  if (!component.asin || component.asin === 'placeholder' || component.asin.startsWith('B0DJKL') || component.asin === '') {
+    console.warn(`Invalid ASIN detected for ${component.name}: ${component.asin}, falling back to search`);
+    return generateComponentSearchLink(component.name, region);
+  }
+
+  // Use the standard affiliate link generation
+  return generateAffiliateLink(component.asin, region);
+}
+
+// Fallback search using component name
+function generateComponentSearchLink(componentName: string, region: Region): string {
+  const domains = {
+    US: 'amazon.com',
+    CA: 'amazon.ca', 
+    UK: 'amazon.co.uk',
+    DE: 'amazon.de',
+    AU: 'amazon.com.au'
+  };
+  
+  const affiliateTags = {
+    US: 'pcbuilder-20',
+    CA: 'pcbuilderCA-20',
+    UK: 'pcbuilder-21',
+    DE: 'pcbuilder-21',
+    AU: 'pcbuilderAU-20'
+  };
+
+  // Clean and encode component name for search
+  const searchQuery = encodeURIComponent(componentName.replace(/[^\w\s]/g, '').trim());
+  
+  const searchLink = `https://${domains[region]}/s?k=${searchQuery}&tag=${affiliateTags[region]}&ref=sr_st_relevancerank`;
+  
+  console.log(`Using component search for ${componentName} on ${region}: ${searchLink}`);
+  return searchLink;
 }

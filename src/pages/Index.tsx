@@ -7,6 +7,9 @@ import BudgetSelector from '../components/BudgetSelector';
 import ComponentSelector from '../components/ComponentSelector';
 import { Region } from '../utils/budgetAllocator';
 import { autonomousSystemInitializer } from '../services/autonomousSystemInitializer';
+import '../utils/amazonLinkTester'; // Load Amazon link testing utilities
+import '../utils/regionDetection'; // Load region detection utilities
+import '../utils/asinValidator'; // Load ASIN validation utilities
 
 const Index = () => {
   const [currentStep, setCurrentStep] = useState<'budget' | 'components'>('budget');
