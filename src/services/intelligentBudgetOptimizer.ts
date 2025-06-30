@@ -41,21 +41,21 @@ class IntelligentBudgetOptimizer {
 
   // Minimum viable specifications for complete build
   private minimumSpecs = {
-    gpu: { minPrice: 200, required: true },
-    cpu: { minPrice: 150, required: true },
-    motherboard: { minPrice: 80, required: true },
-    ram: { minPrice: 60, required: true, minCapacity: '16GB' },
-    storage: { minPrice: 50, required: true, minCapacity: '500GB' },
-    psu: { minPrice: 60, required: true, minWattage: 500 },
-    cooler: { minPrice: 25, required: true },
-    case: { minPrice: 50, required: true }
+    gpu: { minPrice: 100, required: true },  // Reduced from 200
+    cpu: { minPrice: 80, required: true },   // Reduced from 150
+    motherboard: { minPrice: 50, required: true }, // Reduced from 80
+    ram: { minPrice: 35, required: true, minCapacity: '8GB' }, // Reduced from 60, 8GB instead of 16GB
+    storage: { minPrice: 30, required: true, minCapacity: '250GB' }, // Reduced from 50, 250GB instead of 500GB
+    psu: { minPrice: 40, required: true, minWattage: 450 }, // Reduced from 60, 450W instead of 500W
+    cooler: { minPrice: 15, required: true }, // Reduced from 25
+    case: { minPrice: 30, required: true }    // Reduced from 50
   };
 
   async optimizeBuildForBudget(totalBudget: number, region: Region): Promise<OptimizedBuild> {
     console.log(`🎯 Optimizing build for $${totalBudget} budget...`);
 
     // Get all available components for each category
-    const availableComponents = await this.getAllAvailableComponents(region);
+    const availableComponents = await this.getAllAvailableComponents(region, totalBudget);
     
     // ALWAYS try to create a complete build, regardless of budget
     let optimizedBuild = await this.createGuaranteedCompleteBuild(totalBudget, region, availableComponents);
@@ -80,19 +80,43 @@ class IntelligentBudgetOptimizer {
     return optimizedBuild;
   }
 
-  private async getAllAvailableComponents(region: Region): Promise<Record<string, Component[]>> {
+  private async getAllAvailableComponents(region: Region, budget?: number): Promise<Record<string, Component[]>> {
     const components: Record<string, Component[]> = {};
     const categories = ['gpu', 'cpu', 'motherboard', 'ram', 'storage', 'psu', 'cooler', 'case'];
     
     for (const category of categories) {
       try {
-        components[category] = await autonomousComponentDiscovery.getLatestComponentsForCategory(category);
+        // Get both autonomous discoveries AND real components for better budget range
+        let allCategoryComponents: Component[] = [];
         
-        // Sort by performance score (price as proxy for now)
-        components[category].sort((a, b) => b.price[region] - a.price[region]);
+        // Add autonomous discoveries (latest high-end components)
+        try {
+          const autonomousComponents = await autonomousComponentDiscovery.getLatestComponentsForCategory(category);
+          allCategoryComponents = [...autonomousComponents];
+        } catch (error) {
+          console.warn(`Autonomous discovery failed for ${category}:`, error);
+        }
+        
+        // Add real verified budget-friendly components
+        const { allRealComponents } = await import('../data/realComponents');
+        if (allRealComponents[category]) {
+          const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
+          const budgetComponents = allRealComponents[category].filter(
+            rc => !existingNames.has(rc.name.toLowerCase())
+          );
+          allCategoryComponents = [...allCategoryComponents, ...budgetComponents];
+        }
+        
+        // Add ultra-budget components for low-budget builds
+        const budgetFriendlyComponents = this.createBudgetFriendlyComponents(category, region);
+        const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
+        const newBudgetComponents = budgetFriendlyComponents.filter(
+          bc => !existingNames.has(bc.name.toLowerCase())
+        );
+        allCategoryComponents = [...allCategoryComponents, ...newBudgetComponents];
         
         // Update with real-time pricing
-        for (const component of components[category]) {
+        for (const component of allCategoryComponents) {
           try {
             const pricing = await realTimePriceTracker.getComponentPricing(component.name, region);
             if (pricing) {
@@ -102,6 +126,19 @@ class IntelligentBudgetOptimizer {
             console.warn(`Failed to update pricing for ${component.name}`);
           }
         }
+        
+        // Sort by PRICE ASCENDING (cheapest first) for better budget allocation
+        allCategoryComponents.sort((a, b) => a.price[region] - b.price[region]);
+        
+        // Debug logging for budget builds
+        if (budget && budget < 1000) {
+          console.log(`💰 ${category} components (budget $${budget}): ${allCategoryComponents.length} total`);
+          console.log(`   Cheapest: ${allCategoryComponents[0]?.name} ($${allCategoryComponents[0]?.price[region]})`);
+          console.log(`   Most expensive: ${allCategoryComponents[allCategoryComponents.length-1]?.name} ($${allCategoryComponents[allCategoryComponents.length-1]?.price[region]})`);
+        }
+        
+        components[category] = allCategoryComponents;
+        
       } catch (error) {
         console.warn(`Failed to get components for ${category}:`, error);
         components[category] = [];
@@ -674,6 +711,139 @@ class IntelligentBudgetOptimizer {
     };
   }
 
+  private createBudgetFriendlyComponents(category: string, region: Region): Component[] {
+    const regionMultipliers: Record<Region, number> = { US: 1.0, CA: 1.25, UK: 1.15, DE: 1.1, AU: 1.35 };
+    
+    const createComponent = (name: string, brand: string, basePrice: number, specs: any, description: string): Component => {
+      const regionPrices: Record<Region, number> = {} as Record<Region, number>;
+      for (const [r, multiplier] of Object.entries(regionMultipliers)) {
+        regionPrices[r as Region] = Math.round(basePrice * multiplier);
+      }
+
+      return {
+        id: `budget-${category}-${name.replace(/\s+/g, '-').toLowerCase()}`,
+        name,
+        brand,
+        price: regionPrices,
+        specs,
+        asin: '',
+        availability: 'in-stock' as const,
+        trend: 'stable' as const,
+        category: category as any,
+        description
+      };
+    };
+
+    switch (category) {
+      case 'cpu':
+        return [
+          createComponent('Intel Core i3-12100F', 'Intel', 89, 
+            { socket: 'LGA1700', powerDraw: 65 }, 
+            'Budget quad-core processor for basic gaming'),
+          createComponent('AMD Ryzen 5 4500', 'AMD', 79, 
+            { socket: 'AM4', powerDraw: 65 }, 
+            'Budget 6-core processor for entry-level builds'),
+          createComponent('Intel Core i3-10100F', 'Intel', 69, 
+            { socket: 'LGA1200', powerDraw: 65 }, 
+            'Ultra-budget quad-core for basic computing')
+        ];
+
+      case 'gpu':
+        return [
+          createComponent('NVIDIA GTX 1650', 'NVIDIA', 149, 
+            { powerDraw: 75 }, 
+            'Entry-level graphics card for 1080p gaming'),
+          createComponent('AMD RX 6400', 'AMD', 119, 
+            { powerDraw: 53 }, 
+            'Budget graphics card for light gaming'),
+          createComponent('NVIDIA GT 1030', 'NVIDIA', 89, 
+            { powerDraw: 30 }, 
+            'Ultra-budget graphics for basic display')
+        ];
+
+      case 'motherboard':
+        return [
+          createComponent('ASRock B450M PRO4', 'ASRock', 59, 
+            { socket: 'AM4', memoryType: 'DDR4' }, 
+            'Budget micro-ATX motherboard'),
+          createComponent('MSI H510M-A PRO', 'MSI', 49, 
+            { socket: 'LGA1200', memoryType: 'DDR4' }, 
+            'Entry-level Intel motherboard'),
+          createComponent('Gigabyte B550M DS3H', 'Gigabyte', 69, 
+            { socket: 'AM4', memoryType: 'DDR4' }, 
+            'Budget AMD motherboard with modern features')
+        ];
+
+      case 'ram':
+        return [
+          createComponent('Corsair Vengeance LPX 8GB DDR4-3200', 'Corsair', 29, 
+            { memoryType: 'DDR4', capacity: '8GB' }, 
+            'Budget 8GB RAM kit for basic computing'),
+          createComponent('Crucial 16GB DDR4-3200', 'Crucial', 45, 
+            { memoryType: 'DDR4', capacity: '16GB' }, 
+            'Budget 16GB RAM for multitasking'),
+          createComponent('Kingston FURY Beast 8GB DDR4-3200', 'Kingston', 25, 
+            { memoryType: 'DDR4', capacity: '8GB' }, 
+            'Ultra-budget 8GB RAM kit')
+        ];
+
+      case 'storage':
+        return [
+          createComponent('Kingston NV2 500GB NVMe', 'Kingston', 29, 
+            { capacity: '500GB', type: 'NVME' }, 
+            'Budget 500GB NVMe SSD'),
+          createComponent('Western Digital Blue 250GB SSD', 'WD', 25, 
+            { capacity: '250GB', type: 'SSD' }, 
+            'Entry-level 250GB SSD'),
+          createComponent('Seagate Barracuda 1TB HDD', 'Seagate', 35, 
+            { capacity: '1TB', type: 'HDD' }, 
+            'Budget 1TB mechanical drive')
+        ];
+
+      case 'psu':
+        return [
+          createComponent('EVGA BR 450W 80+ Bronze', 'EVGA', 39, 
+            { wattage: 450 }, 
+            'Budget 450W power supply'),
+          createComponent('Corsair CV450 80+ Bronze', 'Corsair', 42, 
+            { wattage: 450 }, 
+            'Reliable budget 450W PSU'),
+          createComponent('Thermaltake Smart 500W', 'Thermaltake', 35, 
+            { wattage: 500 }, 
+            'Entry-level 500W power supply')
+        ];
+
+      case 'cooler':
+        return [
+          createComponent('Cooler Master Hyper 212 EVO', 'Cooler Master', 25, 
+            { type: 'Air' }, 
+            'Popular budget air cooler'),
+          createComponent('Arctic Freezer 34 eSports', 'Arctic', 19, 
+            { type: 'Air' }, 
+            'Budget tower cooler'),
+          createComponent('Stock CPU Cooler', 'Generic', 12, 
+            { type: 'Air' }, 
+            'Basic included CPU cooler')
+        ];
+
+      case 'case':
+        return [
+          createComponent('Fractal Design Core 1000', 'Fractal Design', 35, 
+            { clearance: { gpu: 350 } }, 
+            'Compact budget micro-ATX case'),
+          createComponent('Cooler Master MasterBox Q300L', 'Cooler Master', 32, 
+            { clearance: { gpu: 340 } }, 
+            'Ultra-compact budget case'),
+          createComponent('Thermaltake Versa H18', 'Thermaltake', 28, 
+            { clearance: { gpu: 350 } }, 
+            'Entry-level micro-ATX case')
+        ];
+
+      default:
+        return [];
+    }
+  }
+
   private createFallbackComponent(category: string, region: Region): Component {
     const fallbackSpecs: Record<string, any> = {
       cpu: { socket: 'LGA1700', powerDraw: 65 },
@@ -687,8 +857,8 @@ class IntelligentBudgetOptimizer {
     };
 
     const fallbackPrices: Record<string, number> = {
-      cpu: 100, gpu: 150, motherboard: 60, ram: 50, 
-      storage: 40, psu: 50, cooler: 25, case: 40
+      cpu: 80, gpu: 100, motherboard: 50, ram: 35, 
+      storage: 30, psu: 40, cooler: 15, case: 30
     };
 
     const price = fallbackPrices[category] || 50;

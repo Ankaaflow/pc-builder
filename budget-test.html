@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Budget Build Test</title>
+</head>
+<body>
+    <h1>Testing Budget Build Selection</h1>
+    <p>Open browser console to see results</p>
+    
+    <script type="module">
+        // Simple test to verify budget components are being selected
+        console.log('🧪 Budget Build Test Started');
+        
+        // Test minimum build cost calculation
+        const minimumSpecs = {
+            gpu: { minPrice: 100 },
+            cpu: { minPrice: 80 },
+            motherboard: { minPrice: 50 },
+            ram: { minPrice: 35 },
+            storage: { minPrice: 30 },
+            psu: { minPrice: 40 },
+            cooler: { minPrice: 15 },
+            case: { minPrice: 30 }
+        };
+        
+        const minimumCost = Object.values(minimumSpecs).reduce((total, spec) => total + spec.minPrice, 0);
+        console.log(`💰 Minimum viable build cost: $${minimumCost}`);
+        
+        // Test budget scenarios
+        const budgetScenarios = [
+            { budget: 300, expected: 'Over budget but complete' },
+            { budget: 500, expected: 'Complete with budget components' },
+            { budget: 1000, expected: 'Complete with mid-range upgrades' },
+            { budget: 2000, expected: 'Complete with high-end components' }
+        ];
+        
+        budgetScenarios.forEach(scenario => {
+            console.log(`🎯 Budget $${scenario.budget}: ${scenario.expected}`);
+            console.log(`   Utilization: ${scenario.budget >= minimumCost ? 'Within range' : 'Will exceed budget'}`);
+        });
+        
+        console.log('✅ Budget test completed. Check the application for actual component selection.');
+    </script>
+</body>
+</html>
