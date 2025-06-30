@@ -8,6 +8,7 @@ import { amazonProductMatcher } from '../services/amazonProductMatcher';
 import { getVerifiedASIN } from '../data/verifiedASINs';
 import { amazonASINScraper } from '../services/amazonASINScraper';
 import { realAmazonScraper } from '../services/realAmazonScraper';
+import { amazonPAAPIService } from '../services/amazonPAAPIService';
 
 export type Region = 'US' | 'CA' | 'UK' | 'DE' | 'AU';
 
@@ -451,11 +452,31 @@ function generateGenericFallbackLink(region: Region): string {
   return searchLink;
 }
 
-// Enhanced version that uses real Amazon scraping
+// Enhanced version that uses Amazon Product Advertising API (best) then fallbacks
 export async function generateSmartAffiliateLink(component: Component, region: Region): Promise<string> {
   console.log(`🔗 Generating smart affiliate link for ${component.name} in ${region}...`);
 
-  // First, try to get a real scraped ASIN from Amazon search (most current and accurate)
+  // FIRST PRIORITY: Amazon Product Advertising API (official, most reliable)
+  if (amazonPAAPIService.isEnabled()) {
+    try {
+      const paApiProduct = await amazonPAAPIService.getBestProductForComponent(
+        component.name, 
+        component.category, 
+        region
+      );
+      
+      if (paApiProduct) {
+        console.log(`🏆 Using Amazon PA API for ${component.name}: ${paApiProduct.asin}`);
+        return amazonPAAPIService.generateAffiliateLink(paApiProduct, region);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Amazon PA API failed for ${component.name}:`, error);
+    }
+  } else {
+    console.log(`⚠️ Amazon PA API not available (${amazonPAAPIService.getSetupInstructions().split('\n')[0]})`);
+  }
+
+  // SECOND PRIORITY: Real Amazon scraping (current but may break)
   try {
     const realScrapedASIN = await realAmazonScraper.getBestRealASIN(component.name, region);
     
@@ -467,7 +488,7 @@ export async function generateSmartAffiliateLink(component: Component, region: R
     console.warn(`⚠️ Real Amazon scraping failed for ${component.name}:`, error);
   }
 
-  // Fallback to simulated scraper
+  // THIRD PRIORITY: Simulated scraper (fallback)
   try {
     const scrapedASIN = await amazonASINScraper.getBestASIN(component.name, component.category, region);
     
@@ -479,7 +500,7 @@ export async function generateSmartAffiliateLink(component: Component, region: R
     console.warn(`⚠️ Fallback ASIN scraping failed for ${component.name}:`, error);
   }
 
-  // Fallback to verified static ASIN database
+  // FOURTH PRIORITY: Verified static ASIN database
   const verifiedASIN = getVerifiedASIN(component.name, region);
   
   if (verifiedASIN) {
@@ -487,13 +508,13 @@ export async function generateSmartAffiliateLink(component: Component, region: R
     return generateAffiliateLink(verifiedASIN, region);
   }
 
-  // Check for invalid/placeholder ASINs in component data
+  // FINAL FALLBACK: Component search or invalid ASIN handling
   if (!component.asin || component.asin === 'placeholder' || component.asin.startsWith('B0DJKL') || component.asin === '') {
     console.warn(`❌ Invalid ASIN detected for ${component.name}: ${component.asin}, falling back to search`);
     return generateComponentSearchLink(component.name, region);
   }
 
-  // Use the component's ASIN, but warn that it's unverified
+  // Use the component's ASIN as last resort
   console.warn(`⚠️ Using unverified component ASIN for ${component.name}: ${component.asin}`);
   return generateAffiliateLink(component.asin, region);
 }
