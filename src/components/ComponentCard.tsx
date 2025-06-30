@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { TrendingUp, TrendingDown, Minus, ExternalLink, CheckCircle, AlertCircle } from 'lucide-react';
 import { Component, Region } from '../utils/budgetAllocator';
-import { generateSmartAffiliateLink } from '../utils/budgetAllocator';
+import { generateSmartAffiliateLinkSync } from '../utils/budgetAllocator';
 import RedditTooltip from './RedditTooltip';
 
 interface ComponentCardProps {
@@ -63,7 +63,7 @@ const ComponentCard: React.FC<ComponentCardProps> = ({
   };
 
   const handleAmazonClick = () => {
-    window.open(generateSmartAffiliateLink(component, region), '_blank');
+    window.open(generateSmartAffiliateLinkSync(component, region), '_blank');
   };
 
   return (

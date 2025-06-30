@@ -6,6 +6,7 @@ import { autonomousComponentDiscovery } from '../services/autonomousComponentDis
 import { realTimePriceTracker } from '../services/realTimePriceTracker';
 import { amazonProductMatcher } from '../services/amazonProductMatcher';
 import { getVerifiedASIN } from '../data/verifiedASINs';
+import { amazonASINScraper } from '../services/amazonASINScraper';
 
 export type Region = 'US' | 'CA' | 'UK' | 'DE' | 'AU';
 
@@ -449,9 +450,46 @@ function generateGenericFallbackLink(region: Region): string {
   return searchLink;
 }
 
-// Enhanced version that takes component name for better search
-export function generateSmartAffiliateLink(component: Component, region: Region): string {
-  // First, try to get a verified ASIN from our curated database
+// Enhanced version that uses dynamic ASIN scraping
+export async function generateSmartAffiliateLink(component: Component, region: Region): Promise<string> {
+  console.log(`🔗 Generating smart affiliate link for ${component.name} in ${region}...`);
+
+  // First, try to get a dynamically scraped ASIN (most current)
+  try {
+    const scrapedASIN = await amazonASINScraper.getBestASIN(component.name, component.category, region);
+    
+    if (scrapedASIN) {
+      console.log(`🤖 Using scraped ASIN for ${component.name}: ${scrapedASIN}`);
+      return generateAffiliateLink(scrapedASIN, region);
+    }
+  } catch (error) {
+    console.warn(`⚠️ ASIN scraping failed for ${component.name}:`, error);
+  }
+
+  // Fallback to verified static ASIN database
+  const verifiedASIN = getVerifiedASIN(component.name, region);
+  
+  if (verifiedASIN) {
+    console.log(`✅ Using verified static ASIN for ${component.name}: ${verifiedASIN}`);
+    return generateAffiliateLink(verifiedASIN, region);
+  }
+
+  // Check for invalid/placeholder ASINs in component data
+  if (!component.asin || component.asin === 'placeholder' || component.asin.startsWith('B0DJKL') || component.asin === '') {
+    console.warn(`❌ Invalid ASIN detected for ${component.name}: ${component.asin}, falling back to search`);
+    return generateComponentSearchLink(component.name, region);
+  }
+
+  // Use the component's ASIN, but warn that it's unverified
+  console.warn(`⚠️ Using unverified component ASIN for ${component.name}: ${component.asin}`);
+  return generateAffiliateLink(component.asin, region);
+}
+
+// Synchronous version for backward compatibility
+export function generateSmartAffiliateLinkSync(component: Component, region: Region): string {
+  console.log(`🔗 Generating sync affiliate link for ${component.name} in ${region}...`);
+
+  // Try verified static ASIN database first (synchronous)
   const verifiedASIN = getVerifiedASIN(component.name, region);
   
   if (verifiedASIN) {
