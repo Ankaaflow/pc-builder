@@ -4,6 +4,7 @@ import { retailVerificationService } from '../services/retailVerification';
 import { redditService } from '../services/redditService';
 import { autonomousComponentDiscovery } from '../services/autonomousComponentDiscovery';
 import { realTimePriceTracker } from '../services/realTimePriceTracker';
+import { amazonProductMatcher } from '../services/amazonProductMatcher';
 
 export type Region = 'US' | 'CA' | 'UK' | 'DE' | 'AU';
 
@@ -55,6 +56,25 @@ export function calculateBudgetAllocation(totalBudget: number): BudgetAllocation
     psu: Math.round(totalBudget * budgetPercentages.psu),
     case: Math.round(totalBudget * budgetPercentages.case)
   };
+}
+
+export async function validateComponentASINs(
+  components: Component[],
+  region: Region
+): Promise<Component[]> {
+  console.log(`Validating ASINs for ${components.length} components in ${region}...`);
+  
+  try {
+    // Use Amazon Product Matcher to validate and update ASINs
+    const validatedComponents = await amazonProductMatcher.validateAndUpdateASINs(components, region);
+    
+    console.log(`ASIN validation complete. Updated ${validatedComponents.length} components.`);
+    return validatedComponents;
+    
+  } catch (error) {
+    console.warn('ASIN validation failed, using original components:', error);
+    return components;
+  }
 }
 
 export async function findBestComponent(
@@ -152,13 +172,55 @@ export async function findBestComponent(
   // If we have affordable options, return the best one within budget
   if (affordable.length > 0) {
     affordable.sort(sortComponents);
-    return affordable[0];
+    const selectedComponent = affordable[0];
+    
+    // Validate and update ASIN for the selected component
+    try {
+      const amazonMatch = await amazonProductMatcher.findBestMatch(selectedComponent, region);
+      if (amazonMatch && amazonMatch.asin !== selectedComponent.asin) {
+        console.log(`Updated ASIN for ${selectedComponent.name}: ${selectedComponent.asin} → ${amazonMatch.asin}`);
+        return {
+          ...selectedComponent,
+          asin: amazonMatch.asin,
+          price: {
+            ...selectedComponent.price,
+            [region]: amazonMatch.price
+          },
+          availability: amazonMatch.availability
+        };
+      }
+    } catch (error) {
+      console.warn(`Failed to validate ASIN for ${selectedComponent.name}:`, error);
+    }
+    
+    return selectedComponent;
   }
   
   // If no affordable options, return the cheapest available component
   // This ensures complete builds even when over budget
   overBudget.sort((a, b) => a.price[region] - b.price[region]); // Sort by price ascending for cheapest
-  return overBudget[0];
+  const selectedComponent = overBudget[0];
+  
+  // Validate ASIN for over-budget component too
+  try {
+    const amazonMatch = await amazonProductMatcher.findBestMatch(selectedComponent, region);
+    if (amazonMatch && amazonMatch.asin !== selectedComponent.asin) {
+      console.log(`Updated ASIN for over-budget ${selectedComponent.name}: ${selectedComponent.asin} → ${amazonMatch.asin}`);
+      return {
+        ...selectedComponent,
+        asin: amazonMatch.asin,
+        price: {
+          ...selectedComponent.price,
+          [region]: amazonMatch.price
+        },
+        availability: amazonMatch.availability
+      };
+    }
+  } catch (error) {
+    console.warn(`Failed to validate ASIN for ${selectedComponent.name}:`, error);
+  }
+  
+  return selectedComponent;
 }
 
 export function checkCompatibility(build: BuildConfiguration): {
