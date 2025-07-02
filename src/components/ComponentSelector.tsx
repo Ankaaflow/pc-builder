@@ -1,9 +1,8 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Cpu, MonitorSpeaker, CircuitBoard, MemoryStick, HardDrive, Fan, Zap, Box } from 'lucide-react';
+import { ArrowLeft, Cpu, MonitorSpeaker, CircuitBoard, MemoryStick, HardDrive, Fan, Zap, Box, ChevronDown, ChevronUp } from 'lucide-react';
 import ComponentCard from './ComponentCard';
 import BuildSidebar from './BuildSidebar';
 import { 
@@ -11,7 +10,6 @@ import {
   Region, 
   generateRecommendedBuild, 
   calculateBudgetAllocation,
-  allComponents,
   checkCompatibility
 } from '../utils/budgetAllocator';
 import { allRealComponents } from '../data/realComponents';
@@ -42,9 +40,18 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
     case: null
   });
   
-  const [activeCategory, setActiveCategory] = useState<keyof BuildConfiguration>('cpu');
+  const [expandedCategory, setExpandedCategory] = useState<keyof BuildConfiguration | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [currentCategoryComponents, setCurrentCategoryComponents] = useState<any[]>([]);
+  const [categoryAlternatives, setCategoryAlternatives] = useState<Record<keyof BuildConfiguration, any[]>>({
+    cpu: [],
+    gpu: [],
+    motherboard: [],
+    ram: [],
+    storage: [],
+    cooler: [],
+    psu: [],
+    case: []
+  });
 
   const budgetAllocation = calculateBudgetAllocation(budget);
 
@@ -71,18 +78,12 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
   };
 
   useEffect(() => {
-    // Generate initial recommended build
     const loadRecommendedBuild = async () => {
       try {
         const recommendedBuild = await generateRecommendedBuild(budget, region);
         setBuild(recommendedBuild);
-        
-        // Load components for the initial category
-        const components = await getAlternativeComponents(activeCategory);
-        setCurrentCategoryComponents(components);
       } catch (error) {
         console.error('Failed to generate recommended build:', error);
-        // You could add error state handling here
       } finally {
         setIsLoading(false);
       }
@@ -91,23 +92,12 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
     loadRecommendedBuild();
   }, [budget, region]);
 
-  // Load components when category changes
-  useEffect(() => {
-    const loadCategoryComponents = async () => {
-      const components = await getAlternativeComponents(activeCategory);
-      setCurrentCategoryComponents(components);
-    };
-    
-    if (!isLoading) {
-      loadCategoryComponents();
-    }
-  }, [activeCategory, budget, region, isLoading]);
-
   const handleComponentSelect = (category: keyof BuildConfiguration, component: any) => {
     setBuild(prev => ({
       ...prev,
       [category]: component
     }));
+    setExpandedCategory(null); // Close alternatives after selection
   };
 
   const handleComponentRemove = (category: keyof BuildConfiguration) => {
@@ -117,18 +107,33 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
     }));
   };
 
-  const getAlternativeComponents = async (category: keyof BuildConfiguration) => {
-    const budget = budgetAllocation[category];
+  const toggleAlternatives = async (category: keyof BuildConfiguration) => {
+    if (expandedCategory === category) {
+      setExpandedCategory(null);
+      return;
+    }
+
+    setExpandedCategory(category);
     
-    // Start with the most current components from autonomous discovery
+    // Load alternatives if not already loaded
+    if (categoryAlternatives[category].length === 0) {
+      const alternatives = await getAlternativeComponents(category);
+      setCategoryAlternatives(prev => ({
+        ...prev,
+        [category]: alternatives
+      }));
+    }
+  };
+
+  const getAlternativeComponents = async (category: keyof BuildConfiguration) => {
+    const categoryBudget = budgetAllocation[category];
+    
     let allCategoryComponents: any[] = [];
     
     try {
-      // Get latest autonomous discoveries (includes RTX 50 series, new CPUs, etc.)
       const autonomousComponents = await autonomousComponentDiscovery.getLatestComponentsForCategory(category);
       allCategoryComponents = [...autonomousComponents];
       
-      // Update prices with real-time data
       for (const component of allCategoryComponents) {
         try {
           const pricing = await realTimePriceTracker.getComponentPricing(component.name, region);
@@ -147,7 +152,6 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
       allCategoryComponents = [...allRealComponents[category]];
     }
     
-    // Add verified real components if we don't have enough options
     if (allCategoryComponents.length < 12) {
       const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
       const additionalComponents = allRealComponents[category].filter(
@@ -157,14 +161,10 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
     }
     
     try {
-      // Try to get additional Reddit components and verify they exist
       const redditComponents = await redditService.getLatestComponentsForType(category, region);
       
       if (redditComponents.length > 0) {
-        // Filter Reddit components to only include real ones
         const verifiedRedditComponents = await retailVerificationService.filterRealComponents(redditComponents);
-        
-        // Merge with existing components, avoiding duplicates
         const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
         const newVerifiedComponents = verifiedRedditComponents.filter(
           rc => !existingNames.has(rc.name.toLowerCase())
@@ -175,22 +175,18 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
       console.warn('Failed to fetch Reddit components for alternatives:', error);
     }
     
-    // Filter and sort components
     const filteredComponents = allCategoryComponents.filter(component => 
-      component.price[region] <= budget * 1.5 && // Show components up to 150% of budget
+      component.price[region] <= categoryBudget * 1.5 &&
       component.availability === 'in-stock'
     );
     
-    // Sort by latest autonomous discoveries first, then by price
     return filteredComponents.sort((a, b) => {
-      // Prioritize autonomous discoveries (latest components like RTX 50 series)
       const aIsAutonomous = a.id.includes('auto') || a.id.includes('retailer') || a.id.includes('news');
       const bIsAutonomous = b.id.includes('auto') || b.id.includes('retailer') || b.id.includes('news');
       
       if (aIsAutonomous && !bIsAutonomous) return -1;
       if (!aIsAutonomous && bIsAutonomous) return 1;
       
-      // Then prioritize real verified components
       const aIsReal = a.id.includes('real');
       const bIsReal = b.id.includes('real');
       
@@ -221,8 +217,6 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
     );
   }
 
-  const selectedComponent = build[activeCategory];
-
   return (
     <div className="flex min-h-screen bg-gray-50">
       {/* Main Content */}
@@ -246,82 +240,120 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
           </div>
         </div>
 
-        {/* Category Navigation */}
-        <div className="bg-white border-b border-gray-200 p-6">
-          <div className="flex flex-wrap gap-2">
+        {/* Component Cards Grid - Wealthsimple Style */}
+        <div className="p-6">
+          <div className="grid gap-6 max-w-4xl">
             {Object.entries(categoryIcons).map(([category, IconComponent]) => {
-              const isSelected = activeCategory === category;
-              const hasComponent = build[category as keyof BuildConfiguration] !== null;
+              const selectedComponent = build[category as keyof BuildConfiguration];
+              const isExpanded = expandedCategory === category;
+              const alternatives = categoryAlternatives[category as keyof BuildConfiguration];
               
               return (
-                <Button
-                  key={category}
-                  variant={isSelected ? "default" : "outline"}
-                  onClick={() => setActiveCategory(category as keyof BuildConfiguration)}
-                  className={`flex items-center gap-2 ${hasComponent ? 'border-green-500' : ''}`}
-                >
-                  <IconComponent className="h-4 w-4" />
-                  {categoryNames[category as keyof typeof categoryNames]}
-                  {hasComponent && <span className="text-green-500">✓</span>}
-                </Button>
+                <Card key={category} className="overflow-hidden">
+                  <CardHeader className="pb-4">
+                    <CardTitle className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <IconComponent className="h-5 w-5 text-gray-600" />
+                        <span>{categoryNames[category as keyof typeof categoryNames]}</span>
+                        <Badge variant="outline" className="text-xs">
+                          ${budgetAllocation[category as keyof BuildConfiguration].toLocaleString()}
+                        </Badge>
+                      </div>
+                      {selectedComponent && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggleAlternatives(category as keyof BuildConfiguration)}
+                          className="flex items-center gap-1"
+                        >
+                          Alternatives
+                          {isExpanded ? (
+                            <ChevronUp className="h-4 w-4" />
+                          ) : (
+                            <ChevronDown className="h-4 w-4" />
+                          )}
+                        </Button>
+                      )}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    {selectedComponent ? (
+                      <div className="space-y-4">
+                        <ComponentCard
+                          component={selectedComponent}
+                          region={region}
+                          isSelected={true}
+                          budgetAllocation={budgetAllocation[category as keyof BuildConfiguration]}
+                          showCompatibility={true}
+                          compatibilityStatus={getCompatibilityStatus(selectedComponent, category as keyof BuildConfiguration)}
+                        />
+                        
+                        {isExpanded && (
+                          <div className="space-y-3 pt-4 border-t">
+                            <h4 className="text-sm font-medium text-gray-700">Alternative Options</h4>
+                            {alternatives.length === 0 ? (
+                              <p className="text-sm text-gray-500">Loading alternatives...</p>
+                            ) : (
+                              <div className="space-y-3 max-h-96 overflow-y-auto">
+                                {alternatives.slice(0, 5).map((component) => (
+                                  <ComponentCard
+                                    key={component.id}
+                                    component={component}
+                                    region={region}
+                                    isSelected={false}
+                                    isRecommended={component.price[region] <= budgetAllocation[category as keyof BuildConfiguration] * 1.1}
+                                    budgetAllocation={budgetAllocation[category as keyof BuildConfiguration]}
+                                    onSelect={(comp) => handleComponentSelect(category as keyof BuildConfiguration, comp)}
+                                    showCompatibility={true}
+                                    compatibilityStatus={getCompatibilityStatus(component, category as keyof BuildConfiguration)}
+                                  />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-lg">
+                        <IconComponent className="h-8 w-8 text-gray-400 mx-auto mb-3" />
+                        <p className="text-sm text-gray-500 mb-3">No component selected</p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => toggleAlternatives(category as keyof BuildConfiguration)}
+                        >
+                          Browse {categoryNames[category as keyof typeof categoryNames]}
+                        </Button>
+                        
+                        {isExpanded && (
+                          <div className="mt-4 space-y-3">
+                            {alternatives.length === 0 ? (
+                              <p className="text-sm text-gray-500">Loading components...</p>
+                            ) : (
+                              <div className="space-y-3 max-h-96 overflow-y-auto">
+                                {alternatives.slice(0, 8).map((component) => (
+                                  <ComponentCard
+                                    key={component.id}
+                                    component={component}
+                                    region={region}
+                                    isSelected={false}
+                                    isRecommended={component.price[region] <= budgetAllocation[category as keyof BuildConfiguration] * 1.1}
+                                    budgetAllocation={budgetAllocation[category as keyof BuildConfiguration]}
+                                    onSelect={(comp) => handleComponentSelect(category as keyof BuildConfiguration, comp)}
+                                    showCompatibility={true}
+                                    compatibilityStatus={getCompatibilityStatus(component, category as keyof BuildConfiguration)}
+                                  />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
               );
             })}
-          </div>
-        </div>
-
-        {/* Component Selection */}
-        <div className="p-6">
-          <div className="mb-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-2">
-              {categoryNames[activeCategory]}
-            </h2>
-            <p className="text-gray-600">
-              Budget allocation: ${budgetAllocation[activeCategory].toLocaleString()}
-            </p>
-          </div>
-
-          {selectedComponent && (
-            <div className="mb-6">
-              <h3 className="text-lg font-medium text-gray-900 mb-3">Selected Component</h3>
-              <ComponentCard
-                component={selectedComponent}
-                region={region}
-                isSelected={true}
-                budgetAllocation={budgetAllocation[activeCategory]}
-                showCompatibility={true}
-                compatibilityStatus={getCompatibilityStatus(selectedComponent, activeCategory)}
-              />
-            </div>
-          )}
-
-          <div className="space-y-4">
-            <h3 className="text-lg font-medium text-gray-900">
-              {selectedComponent ? 'Alternative Options' : 'Available Components'}
-            </h3>
-            
-            {currentCategoryComponents.length === 0 ? (
-              <Card>
-                <CardContent className="p-8 text-center">
-                  <p className="text-gray-500">No components available for this budget range.</p>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="grid gap-4">
-                {currentCategoryComponents.map((component) => (
-                  <ComponentCard
-                    key={component.id}
-                    component={component}
-                    region={region}
-                    isSelected={selectedComponent?.id === component.id}
-                    isRecommended={component.price[region] <= budgetAllocation[activeCategory] * 1.1}
-                    budgetAllocation={budgetAllocation[activeCategory]}
-                    onSelect={(comp) => handleComponentSelect(activeCategory, comp)}
-                    showCompatibility={true}
-                    compatibilityStatus={getCompatibilityStatus(component, activeCategory)}
-                  />
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </div>
