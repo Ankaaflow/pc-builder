@@ -10,9 +10,9 @@ import {
   BuildConfiguration, 
   Region, 
   generateRecommendedBuild, 
-  calculateBudgetAllocation,
-  checkCompatibility
+  calculateBudgetAllocation
 } from '../utils/budgetAllocator';
+import { learningCompatibilityService } from '../services/learningCompatibilityService';
 import { allRealComponents } from '../data/realComponents';
 import { retailVerificationService } from '../services/retailVerification';
 import { redditService } from '../services/redditService';
@@ -84,13 +84,19 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
         const recommendedBuild = await generateRecommendedBuild(budget, region);
         setBuild(recommendedBuild);
         
-        // Verify the recommended build is compatible
-        const compatibility = checkCompatibility(recommendedBuild);
-        if (!compatibility.isCompatible) {
-          console.error('❌ Generated recommended build has compatibility issues:', compatibility.warnings);
-          // This should not happen with the enhanced generateRecommendedBuild function
-        } else {
-          console.log('✅ Generated fully compatible recommended build');
+        // Verify the recommended build is compatible using learning system
+        try {
+          const compatibilityResults = await learningCompatibilityService.checkLearnedCompatibility(recommendedBuild);
+          const hasIssues = compatibilityResults.some(result => !result.compatible && result.confidence > 0.5);
+          
+          if (hasIssues) {
+            console.warn('⚠️ Generated build may have compatibility issues based on learned patterns:', 
+              compatibilityResults.filter(r => !r.compatible));
+          } else {
+            console.log('✅ Generated compatible build based on learned patterns');
+          }
+        } catch (error) {
+          console.warn('Could not verify compatibility with learning system:', error);
         }
       } catch (error) {
         console.error('Failed to generate recommended build:', error);
@@ -192,17 +198,9 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
              component.availability === 'in-stock';
     });
     
+    // Sort components with simple priority first, compatibility will be checked later
     return filteredComponents.sort((a, b) => {
-      // First prioritize compatible components
-      const testBuildA = { ...build, [category]: a };
-      const testBuildB = { ...build, [category]: b };
-      const compatibilityA = checkCompatibility(testBuildA);
-      const compatibilityB = checkCompatibility(testBuildB);
-      
-      if (compatibilityA.isCompatible && !compatibilityB.isCompatible) return -1;
-      if (!compatibilityA.isCompatible && compatibilityB.isCompatible) return 1;
-      
-      // Then by source priority
+      // Sort by source priority first
       const aIsAutonomous = a.id.includes('auto') || a.id.includes('retailer') || a.id.includes('news');
       const bIsAutonomous = b.id.includes('auto') || b.id.includes('retailer') || b.id.includes('news');
       
@@ -230,22 +228,64 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
     });
   };
 
-  const getCompatibilityStatus = (component: any, category: keyof BuildConfiguration) => {
+  const getCompatibilityStatus = async (component: any, category: keyof BuildConfiguration) => {
     const testBuild = { ...build, [category]: component };
-    const compatibility = checkCompatibility(testBuild);
     
-    if (compatibility.isCompatible) return 'compatible';
-    if (compatibility.warnings.length > 0) return 'warning';
-    return 'incompatible';
+    try {
+      const compatibilityResults = await learningCompatibilityService.checkLearnedCompatibility(testBuild);
+      
+      // Check for high-confidence incompatible results
+      const criticalIssues = compatibilityResults.filter(result => 
+        !result.compatible && result.confidence > 0.7
+      );
+      
+      const warnings = compatibilityResults.filter(result => 
+        !result.compatible && result.confidence > 0.3 && result.confidence <= 0.7
+      );
+      
+      if (criticalIssues.length > 0) return 'incompatible';
+      if (warnings.length > 0) return 'warning';
+      return 'compatible';
+    } catch (error) {
+      console.warn('Error checking component compatibility:', error);
+      return 'compatible'; // Default to compatible if learning system fails
+    }
   };
+
+  const [compatibilityCache, setCompatibilityCache] = useState<Record<string, string>>({});
 
   const isSelectedComponentIncompatible = (category: keyof BuildConfiguration) => {
     const selectedComponent = build[category];
     if (!selectedComponent) return false;
     
-    const status = getCompatibilityStatus(selectedComponent, category);
+    // Use cached status or default to compatible
+    const cacheKey = `${category}-${selectedComponent.id}`;
+    const status = compatibilityCache[cacheKey] || 'compatible';
     return status === 'incompatible' || status === 'warning';
   };
+
+  // Update compatibility cache when build changes
+  useEffect(() => {
+    const updateCompatibilityCache = async () => {
+      const newCache: Record<string, string> = {};
+      
+      for (const [category, component] of Object.entries(build)) {
+        if (component) {
+          const cacheKey = `${category}-${component.id}`;
+          try {
+            const status = await getCompatibilityStatus(component, category as keyof BuildConfiguration);
+            newCache[cacheKey] = status;
+          } catch (error) {
+            newCache[cacheKey] = 'compatible';
+          }
+        }
+      }
+      
+      setCompatibilityCache(newCache);
+    };
+    
+    updateCompatibilityCache();
+  }, [build]);
 
   if (isLoading) {
     return (
@@ -340,7 +380,7 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
                           isSelected={true}
                           budgetAllocation={budgetAllocation[category as keyof BuildConfiguration]}
                           showCompatibility={true}
-                          compatibilityStatus={getCompatibilityStatus(selectedComponent, category as keyof BuildConfiguration)}
+                          compatibilityStatus={compatibilityCache[`${category}-${selectedComponent.id}`] || 'compatible'}
                         />
                         
                         {isExpanded && (
@@ -360,7 +400,7 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
                                     budgetAllocation={budgetAllocation[category as keyof BuildConfiguration]}
                                     onSelect={(comp) => handleComponentSelect(category as keyof BuildConfiguration, comp)}
                                     showCompatibility={true}
-                                    compatibilityStatus={getCompatibilityStatus(component, category as keyof BuildConfiguration)}
+                                    compatibilityStatus={compatibilityCache[`${category}-${component.id}`] || 'compatible'}
                                   />
                                 ))}
                               </div>
@@ -396,7 +436,7 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
                                     budgetAllocation={budgetAllocation[category as keyof BuildConfiguration]}
                                     onSelect={(comp) => handleComponentSelect(category as keyof BuildConfiguration, comp)}
                                     showCompatibility={true}
-                                    compatibilityStatus={getCompatibilityStatus(component, category as keyof BuildConfiguration)}
+                                    compatibilityStatus={compatibilityCache[`${category}-${component.id}`] || 'compatible'}
                                   />
                                 ))}
                               </div>

@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { CheckCircle, AlertTriangle, ExternalLink } from 'lucide-react';
-import { BuildConfiguration, Region, calculateTotalPrice, checkCompatibility, generateSmartAffiliateLinkSync } from '../utils/budgetAllocator';
+import { BuildConfiguration, Region, calculateTotalPrice, generateSmartAffiliateLinkSync } from '../utils/budgetAllocator';
+import { learningCompatibilityService } from '../services/learningCompatibilityService';
 
 interface BuildSidebarProps {
   build: BuildConfiguration;
@@ -28,10 +29,32 @@ const BuildSidebar: React.FC<BuildSidebarProps> = ({
     AU: 'AU$'
   };
 
+  const [compatibilityResults, setCompatibilityResults] = React.useState<any[]>([]);
+  const [isCompatible, setIsCompatible] = React.useState(true);
+  
   const totalPrice = calculateTotalPrice(build, region);
   const remainingBudget = budget - totalPrice;
   const budgetUsedPercentage = (totalPrice / budget) * 100;
-  const compatibility = checkCompatibility(build);
+  
+  // Check compatibility using learning system
+  React.useEffect(() => {
+    const checkBuildCompatibility = async () => {
+      try {
+        const results = await learningCompatibilityService.checkLearnedCompatibility(build);
+        setCompatibilityResults(results);
+        
+        // Consider build incompatible if there are high-confidence issues
+        const hasIssues = results.some(result => !result.compatible && result.confidence > 0.5);
+        setIsCompatible(!hasIssues);
+      } catch (error) {
+        console.warn('Error checking build compatibility:', error);
+        setCompatibilityResults([]);
+        setIsCompatible(true); // Default to compatible if learning system fails
+      }
+    };
+    
+    checkBuildCompatibility();
+  }, [build]);
 
   const categoryNames = {
     cpu: 'Processor',
@@ -106,7 +129,7 @@ const BuildSidebar: React.FC<BuildSidebarProps> = ({
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               Compatibility
-              {compatibility.isCompatible ? (
+              {isCompatible ? (
                 <CheckCircle className="h-5 w-5 text-green-500" />
               ) : (
                 <AlertTriangle className="h-5 w-5 text-red-500" />
@@ -114,16 +137,31 @@ const BuildSidebar: React.FC<BuildSidebarProps> = ({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {compatibility.isCompatible ? (
-              <p className="text-sm text-green-600">All components are compatible!</p>
+            {isCompatible ? (
+              <div className="space-y-2">
+                <p className="text-sm text-green-600">All components are compatible based on learned patterns!</p>
+                {compatibilityResults.length > 0 && (
+                  <p className="text-xs text-gray-500">
+                    Verified using {compatibilityResults.length} compatibility checks
+                  </p>
+                )}
+              </div>
             ) : (
               <div className="space-y-2">
-                {compatibility.warnings.map((warning, index) => (
-                  <div key={index} className="flex items-start gap-2">
-                    <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
-                    <p className="text-sm text-red-600">{warning}</p>
-                  </div>
-                ))}
+                {compatibilityResults
+                  .filter(result => !result.compatible && result.confidence > 0.5)
+                  .map((result, index) => (
+                    <div key={index} className="flex items-start gap-2">
+                      <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
+                      <div className="text-sm">
+                        <p className="text-red-600">{result.explanation}</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Confidence: {Math.round(result.confidence * 100)}% • Source: {result.source}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                }
               </div>
             )}
           </CardContent>
