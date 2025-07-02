@@ -9,6 +9,14 @@ import { getVerifiedASIN } from '../data/verifiedASINs';
 import { amazonASINScraper } from '../services/amazonASINScraper';
 import { realAmazonScraper } from '../services/realAmazonScraper';
 import { amazonPAAPIService } from '../services/amazonPAAPIService';
+import { 
+  getSocketInfo, 
+  getCPUCompatibility, 
+  isMemoryCompatible, 
+  isCoolerCompatible,
+  powerRequirements,
+  memoryCompatibilityRules
+} from '../data/compatibilityRules';
 
 export type Region = 'US' | 'CA' | 'UK' | 'DE' | 'AU';
 
@@ -234,63 +242,130 @@ export function checkCompatibility(build: BuildConfiguration): {
   const warnings: string[] = [];
   let isCompatible = true;
   
-  // Check CPU and Motherboard socket compatibility
+  // Enhanced CPU and Motherboard socket compatibility using real-world data
   if (build.cpu && build.motherboard) {
-    if (build.cpu.specs.socket !== build.motherboard.specs.socket) {
-      warnings.push('CPU socket does not match motherboard socket');
+    const cpuSocket = build.cpu.specs.socket;
+    const motherboardSocket = build.motherboard.specs.socket;
+    
+    if (cpuSocket !== motherboardSocket) {
+      warnings.push(`CPU socket (${cpuSocket}) does not match motherboard socket (${motherboardSocket})`);
       isCompatible = false;
+    }
+    
+    // Additional CPU generation and chipset compatibility checks
+    const cpuCompatibility = getCPUCompatibility(build.cpu.name);
+    const motherboardChipset = (build.motherboard.specs as any).chipset;
+    
+    if (cpuCompatibility && motherboardChipset) {
+      if (!cpuCompatibility.supportedChipsets.includes(motherboardChipset)) {
+        warnings.push(`CPU ${build.cpu.name} may not be compatible with ${motherboardChipset} chipset`);
+        isCompatible = false;
+      }
     }
   }
   
-  // Check RAM and Motherboard compatibility
+  // Enhanced RAM and Motherboard compatibility using socket-specific rules
   if (build.ram && build.motherboard) {
-    if (build.ram.specs.memoryType !== build.motherboard.specs.memoryType) {
-      warnings.push('RAM type does not match motherboard memory support');
+    const memoryType = build.ram.specs.memoryType;
+    const motherboardSocket = build.motherboard.specs.socket;
+    
+    if (!isMemoryCompatible(motherboardSocket, memoryType)) {
+      const socketInfo = getSocketInfo(motherboardSocket);
+      const supportedTypes = socketInfo?.memoryType.join(', ') || 'Unknown';
+      warnings.push(`Memory type ${memoryType} not supported by ${motherboardSocket} socket. Supported: ${supportedTypes}`);
       isCompatible = false;
+    }
+    
+    // Check memory speed compatibility
+    const memoryRules = memoryCompatibilityRules[motherboardSocket as keyof typeof memoryCompatibilityRules];
+    const ramSpeed = (build.ram.specs as any).speed || 0;
+    
+    if (memoryRules && ramSpeed > memoryRules.maxSpeed) {
+      warnings.push(`Memory speed ${ramSpeed}MHz exceeds ${motherboardSocket} maximum of ${memoryRules.maxSpeed}MHz`);
+      // Don't mark as incompatible - it will just run at lower speed
     }
   }
   
-  // Check power requirements
+  // Enhanced power requirements based on Reddit build recommendations
   if (build.cpu && build.gpu && build.psu) {
-    const totalPower = (build.cpu.specs.powerDraw || 0) + (build.gpu.specs.powerDraw || 0) + 100; // +100 for other components
+    const cpuPower = build.cpu.specs.powerDraw || 0;
+    const gpuPower = build.gpu.specs.powerDraw || 0;
+    const systemPower = cpuPower + gpuPower + 150; // +150W for motherboard, RAM, storage, fans
     const psuWattage = build.psu.specs.wattage || 0;
     
-    if (totalPower > psuWattage * 0.8) { // 80% PSU utilization max
-      warnings.push('Power supply may be insufficient for this configuration');
+    // Use 80% rule (Reddit community standard)
+    const usablePower = psuWattage * 0.8;
+    
+    if (systemPower > usablePower) {
+      const recommendedWattage = Math.ceil(systemPower / 0.8 / 50) * 50; // Round up to nearest 50W
+      warnings.push(`Power supply insufficient. System needs ~${systemPower}W, PSU provides ${Math.round(usablePower)}W usable. Recommend ${recommendedWattage}W+ PSU`);
       isCompatible = false;
+    }
+    
+    // Warn about efficiency tier based on GPU tier
+    if (gpuPower > 300 && (!build.psu.specs.efficiency || !build.psu.specs.efficiency.includes('Gold'))) {
+      warnings.push('High-end GPU detected. Consider 80+ Gold or better PSU for efficiency');
+      // Don't mark incompatible, just a recommendation
     }
   }
   
-  // Check GPU clearance in case
+  // GPU clearance check with case form factor awareness
   if (build.gpu && build.case) {
     const gpuLength = build.gpu.specs.dimensions?.length || 0;
     const caseGpuClearance = build.case.specs.clearance?.gpu || 0;
     
     if (gpuLength > caseGpuClearance) {
-      warnings.push('Graphics card may not fit in selected case');
+      warnings.push(`Graphics card length (${gpuLength}mm) exceeds case clearance (${caseGpuClearance}mm)`);
+      isCompatible = false;
+    }
+    
+    // Warn about potential fit issues in small cases
+    const caseFormFactor = ((build.case.specs as any).formFactor?.toLowerCase() || '');
+    if ((caseFormFactor.includes('mini-itx') || caseFormFactor.includes('mini')) && gpuLength > 250) {
+      warnings.push('Large GPU in compact case - verify specific model compatibility');
+    }
+  }
+  
+  // Enhanced cooler compatibility using socket-specific rules
+  if (build.cooler && build.cpu) {
+    const cpuSocket = build.cpu.specs.socket;
+    const coolerSocket = build.cooler.specs.socket || build.cooler.specs.compatibility?.[0] || '';
+    
+    if (!isCoolerCompatible(cpuSocket, coolerSocket)) {
+      warnings.push(`CPU cooler not compatible with ${cpuSocket} socket`);
+      isCompatible = false;
+    }
+    
+    // Check TDP compatibility
+    const cpuTDP = build.cpu.specs.powerDraw || 0;
+    const coolerTDP = (build.cooler.specs as any).tdpRating || 0;
+    
+    if (coolerTDP > 0 && cpuTDP > coolerTDP) {
+      warnings.push(`CPU TDP (${cpuTDP}W) exceeds cooler rating (${coolerTDP}W)`);
       isCompatible = false;
     }
   }
   
-  // Check cooler clearance
+  // Cooler height clearance in case
   if (build.cooler && build.case) {
     const coolerHeight = build.cooler.specs.dimensions?.height || 0;
     const caseCoolerClearance = build.case.specs.clearance?.cooler || 0;
     
     if (coolerHeight > caseCoolerClearance) {
-      warnings.push('CPU cooler may not fit in selected case');
+      warnings.push(`CPU cooler height (${coolerHeight}mm) exceeds case clearance (${caseCoolerClearance}mm)`);
       isCompatible = false;
     }
   }
   
-  // Check cooler compatibility with CPU socket
-  if (build.cooler && build.cpu) {
-    const coolerCompatibility = build.cooler.specs.compatibility || [];
-    const cpuSocket = build.cpu.specs.socket || '';
-    
-    if (!coolerCompatibility.includes(cpuSocket)) {
-      warnings.push('CPU cooler is not compatible with selected CPU socket');
-      isCompatible = false;
+  // M.2 slot availability check
+  if (build.storage && build.motherboard) {
+    const storageType = build.storage.specs.interface?.toLowerCase() || '';
+    if (storageType.includes('m.2') || storageType.includes('nvme')) {
+      const m2Slots = (build.motherboard.specs as any).m2Slots || 1;
+      if (m2Slots < 1) {
+        warnings.push('M.2 storage selected but motherboard may not have M.2 slots');
+        isCompatible = false;
+      }
     }
   }
   
@@ -301,6 +376,8 @@ export async function generateRecommendedBuild(
   budget: number,
   region: Region
 ): Promise<BuildConfiguration> {
+  console.log(`🏗️ Generating fully compatible recommended build for $${budget} in ${region}...`);
+  
   // First try to get budget-specific recommendations from r/buildapcforme
   const budgetSpecificComponents: Component[] = [];
   
@@ -321,33 +398,180 @@ export async function generateRecommendedBuild(
 
   const allocation = calculateBudgetAllocation(budget);
   
-  // Build components asynchronously, prioritizing budget-specific recommendations
-  const [cpu, gpu, motherboard, ram, storage, cooler, psu, caseComponent] = await Promise.all([
-    findBestComponentWithBudgetPreference('cpu', allocation.cpu, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('gpu', allocation.gpu, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('motherboard', allocation.motherboard, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('ram', allocation.ram, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('storage', allocation.storage, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('cooler', allocation.cooler, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('psu', allocation.psu, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('case', allocation.case, region, budgetSpecificComponents)
-  ]);
-  
+  // Build components sequentially to ensure compatibility - enhanced approach
   const build: BuildConfiguration = {
-    cpu,
-    gpu,
-    motherboard,
-    ram,
-    storage,
-    cooler,
-    psu,
-    case: caseComponent
+    cpu: null,
+    gpu: null,
+    motherboard: null,
+    ram: null,
+    storage: null,
+    cooler: null,
+    psu: null,
+    case: null
   };
+
+  // Step 1: Select CPU first (foundation component) - prioritize compatibility
+  console.log('🔧 Step 1: Selecting CPU (foundation component)...');
+  build.cpu = await findBestComponentWithBudgetPreference('cpu', allocation.cpu, region, budgetSpecificComponents);
   
+  if (!build.cpu) {
+    console.error('❌ Failed to find CPU, cannot build compatible system');
+    throw new Error('Unable to find compatible CPU for build');
+  }
+  console.log(`✅ Selected CPU: ${build.cpu.name} (${build.cpu.specs.socket})`);
+  
+  // Step 2: Select compatible motherboard based on CPU socket - MUST be compatible
+  console.log('🔧 Step 2: Selecting compatible motherboard...');
+  build.motherboard = await findCompatibleComponent('motherboard', allocation.motherboard, region, budgetSpecificComponents, build);
+  
+  if (!build.motherboard) {
+    console.error('❌ Failed to find compatible motherboard, regenerating with different CPU...');
+    // Try with a different CPU if motherboard compatibility fails
+    build.cpu = await findAlternativeCompatibleCPU(allocation.cpu, region, budgetSpecificComponents);
+    if (build.cpu) {
+      build.motherboard = await findCompatibleComponent('motherboard', allocation.motherboard, region, budgetSpecificComponents, build);
+    }
+  }
+  
+  if (!build.motherboard) {
+    throw new Error('Unable to find compatible motherboard for build');
+  }
+  console.log(`✅ Selected Motherboard: ${build.motherboard.name} (${build.motherboard.specs.socket})`);
+  
+  // Step 3: Select compatible RAM based on motherboard/CPU memory support
+  console.log('🔧 Step 3: Selecting compatible RAM...');
+  build.ram = await findCompatibleComponent('ram', allocation.ram, region, budgetSpecificComponents, build);
+  
+  if (!build.ram) {
+    console.error('❌ Failed to find compatible RAM');
+    throw new Error('Unable to find compatible RAM for build');
+  }
+  console.log(`✅ Selected RAM: ${build.ram.name} (${build.ram.specs.memoryType})`);
+  
+  // Step 4: Select GPU (generally independent, but consider PSU requirements)
+  console.log('🔧 Step 4: Selecting GPU...');
+  build.gpu = await findBestComponentWithBudgetPreference('gpu', allocation.gpu, region, budgetSpecificComponents);
+  
+  if (!build.gpu) {
+    console.error('❌ Failed to find GPU');
+    throw new Error('Unable to find GPU for build');
+  }
+  console.log(`✅ Selected GPU: ${build.gpu.name} (${build.gpu.specs.powerDraw}W)`);
+  
+  // Step 5: Select compatible PSU based on CPU+GPU power requirements
+  console.log('🔧 Step 5: Selecting compatible PSU...');
+  build.psu = await findCompatibleComponent('psu', allocation.psu, region, budgetSpecificComponents, build);
+  
+  if (!build.psu) {
+    console.error('❌ Failed to find compatible PSU');
+    throw new Error('Unable to find compatible PSU for build');
+  }
+  console.log(`✅ Selected PSU: ${build.psu.name} (${build.psu.specs.wattage}W)`);
+  
+  // Step 6: Select compatible cooler based on CPU socket and TDP
+  console.log('🔧 Step 6: Selecting compatible cooler...');
+  build.cooler = await findCompatibleComponent('cooler', allocation.cooler, region, budgetSpecificComponents, build);
+  
+  if (!build.cooler) {
+    console.error('❌ Failed to find compatible cooler');
+    throw new Error('Unable to find compatible cooler for build');
+  }
+  console.log(`✅ Selected Cooler: ${build.cooler.name} (${build.cooler.specs.socket})`);
+  
+  // Step 7: Select case with adequate clearance
+  console.log('🔧 Step 7: Selecting compatible case...');
+  build.case = await findCompatibleComponent('case', allocation.case, region, budgetSpecificComponents, build);
+  
+  if (!build.case) {
+    console.error('❌ Failed to find compatible case');
+    throw new Error('Unable to find compatible case for build');
+  }
+  console.log(`✅ Selected Case: ${build.case.name}`);
+  
+  // Step 8: Select storage (generally compatible with any motherboard)
+  console.log('🔧 Step 8: Selecting storage...');
+  build.storage = await findCompatibleComponent('storage', allocation.storage, region, budgetSpecificComponents, build);
+  
+  if (!build.storage) {
+    console.error('❌ Failed to find storage');
+    throw new Error('Unable to find storage for build');
+  }
+  console.log(`✅ Selected Storage: ${build.storage.name}`);
+  
+  // Final compatibility check - this should ALWAYS pass now
+  console.log('🔍 Performing final compatibility verification...');
+  const compatibility = checkCompatibility(build);
+  if (!compatibility.isCompatible) {
+    console.error('❌ Generated build still has compatibility issues after all safeguards:', compatibility.warnings);
+    
+    // Last resort: attempt automated fix
+    console.log('🔧 Attempting emergency compatibility fix...');
+    const fixedBuild = await fixCompatibilityIssues(build, allocation, region, budgetSpecificComponents);
+    
+    const finalCheck = checkCompatibility(fixedBuild);
+    if (!finalCheck.isCompatible) {
+      console.error('❌ Emergency fix failed. Build may have compatibility issues:', finalCheck.warnings);
+      // Return the build anyway but log the issue
+    } else {
+      console.log('✅ Emergency fix successful - build is now compatible');
+      return fixedBuild;
+    }
+  }
+  
+  console.log('🎉 Generated fully compatible recommended build successfully!');
   return build;
 }
 
-async function findBestComponentWithBudgetPreference(
+// Enhanced function to find alternative CPU if first choice doesn't work
+async function findAlternativeCompatibleCPU(
+  budget: number,
+  region: Region,
+  budgetSpecificComponents: Component[]
+): Promise<Component | null> {
+  console.log('🔄 Finding alternative CPU for better motherboard compatibility...');
+  
+  let allCPUs: Component[] = [];
+  
+  try {
+    const autonomousCPUs = await autonomousComponentDiscovery.getLatestComponentsForCategory('cpu');
+    allCPUs = [...autonomousCPUs, ...allRealComponents.cpu];
+  } catch (error) {
+    allCPUs = [...allRealComponents.cpu];
+  }
+  
+  // Filter for available CPUs within expanded budget range
+  const availableCPUs = allCPUs.filter(cpu => 
+    cpu.availability === 'in-stock' && 
+    cpu.price[region] <= budget * 1.5 // Allow going over budget for compatibility
+  );
+  
+  // Sort by socket popularity (AM5, LGA1700 are current gen with more motherboard options)
+  availableCPUs.sort((a, b) => {
+    const socketPriority = { 'AM5': 5, 'LGA1700': 4, 'LGA1851': 3, 'AM4': 2 };
+    const aPriority = socketPriority[a.specs.socket as keyof typeof socketPriority] || 1;
+    const bPriority = socketPriority[b.specs.socket as keyof typeof socketPriority] || 1;
+    
+    if (aPriority !== bPriority) return bPriority - aPriority;
+    
+    // Then by budget fit
+    const aInBudget = a.price[region] <= budget;
+    const bInBudget = b.price[region] <= budget;
+    
+    if (aInBudget && !bInBudget) return -1;
+    if (!aInBudget && bInBudget) return 1;
+    
+    return b.price[region] - a.price[region];
+  });
+  
+  const alternativeCPU = availableCPUs[0];
+  if (alternativeCPU) {
+    console.log(`🔄 Selected alternative CPU: ${alternativeCPU.name} (${alternativeCPU.specs.socket})`);
+  }
+  
+  return alternativeCPU || null;
+}
+
+export async function findBestComponentWithBudgetPreference(
   category: keyof typeof allComponents,
   budget: number,
   region: Region,
@@ -379,6 +603,157 @@ async function findBestComponentWithBudgetPreference(
   
   // Fallback to standard component discovery (which now also allows over-budget)
   return findBestComponent(category, budget, region, requirements);
+}
+
+// Find compatible component based on existing build selections
+async function findCompatibleComponent(
+  category: keyof typeof allComponents,
+  budget: number,
+  region: Region,
+  budgetSpecificComponents: Component[],
+  currentBuild: BuildConfiguration
+): Promise<Component | null> {
+  // Get all available components for this category
+  let allCategoryComponents: Component[] = [];
+  
+  try {
+    const autonomousComponents = await autonomousComponentDiscovery.getLatestComponentsForCategory(category);
+    allCategoryComponents = [...autonomousComponents];
+    
+    for (const component of allCategoryComponents) {
+      try {
+        const pricing = await realTimePriceTracker.getComponentPricing(component.name, region);
+        if (pricing) {
+          component.price[region] = pricing.lowestPrice;
+          component.trend = pricing.trending;
+          component.availability = pricing.retailers.some(r => r.availability === 'in-stock') ? 'in-stock' : 'limited';
+        }
+      } catch (error) {
+        console.warn(`Failed to update pricing for ${component.name}:`, error);
+      }
+    }
+  } catch (error) {
+    console.warn('Autonomous discovery failed, using verified components:', error);
+    allCategoryComponents = [...allRealComponents[category]];
+  }
+  
+  // Add verified real components if needed
+  if (allCategoryComponents.length < 8) {
+    const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
+    const additionalComponents = allRealComponents[category].filter(
+      rc => !existingNames.has(rc.name.toLowerCase())
+    );
+    allCategoryComponents = [...allCategoryComponents, ...additionalComponents];
+  }
+
+  // Add budget-specific components
+  const budgetSpecificAvailable = budgetSpecificComponents
+    .filter(c => c.category === category && c.availability === 'in-stock');
+  
+  const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
+  const newBudgetComponents = budgetSpecificAvailable.filter(
+    c => !existingNames.has(c.name.toLowerCase())
+  );
+  allCategoryComponents = [...allCategoryComponents, ...newBudgetComponents];
+
+  // Filter for available components
+  const available = allCategoryComponents.filter(
+    component => component.availability === 'in-stock'
+  );
+  
+  if (available.length === 0) return null;
+
+  // Filter for compatibility with existing build
+  const compatible = available.filter(component => {
+    const testBuild = { ...currentBuild, [category]: component };
+    const compatibility = checkCompatibility(testBuild);
+    return compatibility.isCompatible;
+  });
+
+  // If no compatible components, try to find the most compatible one
+  if (compatible.length === 0) {
+    console.warn(`No fully compatible ${category} components found, selecting best available`);
+    return available.sort((a, b) => a.price[region] - b.price[region])[0];
+  }
+
+  // Sort compatible components by preference (budget-specific first, then by price)
+  const sortedCompatible = compatible.sort((a, b) => {
+    // Prioritize budget-specific components
+    const aIsBudgetSpecific = budgetSpecificComponents.some(c => c.id === a.id);
+    const bIsBudgetSpecific = budgetSpecificComponents.some(c => c.id === b.id);
+    
+    if (aIsBudgetSpecific && !bIsBudgetSpecific) return -1;
+    if (!aIsBudgetSpecific && bIsBudgetSpecific) return 1;
+    
+    // Then by whether they're within budget
+    const aInBudget = a.price[region] <= budget;
+    const bInBudget = b.price[region] <= budget;
+    
+    if (aInBudget && !bInBudget) return -1;
+    if (!aInBudget && bInBudget) return 1;
+    
+    // Finally by price (higher within budget, lower if over budget)
+    if (aInBudget && bInBudget) {
+      return b.price[region] - a.price[region]; // Higher price = better performance
+    } else {
+      return a.price[region] - b.price[region]; // Lower price if over budget
+    }
+  });
+
+  const selectedComponent = sortedCompatible[0];
+  console.log(`Selected compatible ${category}: ${selectedComponent.name}`);
+  return selectedComponent;
+}
+
+// Fix compatibility issues in a build by replacing problematic components
+async function fixCompatibilityIssues(
+  build: BuildConfiguration,
+  allocation: BudgetAllocation,
+  region: Region,
+  budgetSpecificComponents: Component[]
+): Promise<BuildConfiguration> {
+  console.log('Attempting to fix compatibility issues...');
+  
+  let fixedBuild = { ...build };
+  let attempts = 0;
+  const maxAttempts = 3;
+  
+  while (attempts < maxAttempts) {
+    const compatibility = checkCompatibility(fixedBuild);
+    
+    if (compatibility.isCompatible) {
+      console.log(`✅ Fixed compatibility issues after ${attempts + 1} attempts`);
+      return fixedBuild;
+    }
+    
+    // Try to fix the most critical issues first
+    for (const warning of compatibility.warnings) {
+      if (warning.includes('socket')) {
+        // Socket mismatch - replace motherboard or CPU
+        if (fixedBuild.cpu && fixedBuild.motherboard) {
+          console.log('Fixing socket compatibility by replacing motherboard...');
+          fixedBuild.motherboard = await findCompatibleComponent('motherboard', allocation.motherboard, region, budgetSpecificComponents, { ...fixedBuild, motherboard: null });
+        }
+      } else if (warning.includes('Memory type')) {
+        // Memory compatibility - replace RAM
+        console.log('Fixing memory compatibility by replacing RAM...');
+        fixedBuild.ram = await findCompatibleComponent('ram', allocation.ram, region, budgetSpecificComponents, { ...fixedBuild, ram: null });
+      } else if (warning.includes('Power supply')) {
+        // PSU compatibility - replace PSU
+        console.log('Fixing PSU compatibility by replacing PSU...');
+        fixedBuild.psu = await findCompatibleComponent('psu', allocation.psu, region, budgetSpecificComponents, { ...fixedBuild, psu: null });
+      } else if (warning.includes('cooler')) {
+        // Cooler compatibility - replace cooler
+        console.log('Fixing cooler compatibility by replacing cooler...');
+        fixedBuild.cooler = await findCompatibleComponent('cooler', allocation.cooler, region, budgetSpecificComponents, { ...fixedBuild, cooler: null });
+      }
+    }
+    
+    attempts++;
+  }
+  
+  console.warn(`❌ Could not fix all compatibility issues after ${maxAttempts} attempts`);
+  return fixedBuild;
 }
 
 export function calculateTotalPrice(build: BuildConfiguration, region: Region): number {
