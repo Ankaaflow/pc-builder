@@ -175,10 +175,15 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
       console.warn('Failed to fetch Reddit components for alternatives:', error);
     }
     
-    const filteredComponents = allCategoryComponents.filter(component => 
-      component.price[region] <= categoryBudget * 1.5 &&
-      component.availability === 'in-stock'
-    );
+    // Filter for compatibility - only show compatible components
+    const filteredComponents = allCategoryComponents.filter(component => {
+      const testBuild = { ...build, [category]: component };
+      const compatibility = checkCompatibility(testBuild);
+      
+      return component.price[region] <= categoryBudget * 1.5 &&
+             component.availability === 'in-stock' &&
+             compatibility.isCompatible;
+    });
     
     return filteredComponents.sort((a, b) => {
       const aIsAutonomous = a.id.includes('auto') || a.id.includes('retailer') || a.id.includes('news');
@@ -219,6 +224,14 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
 
   return (
     <div className="flex min-h-screen bg-gray-50">
+      {/* Sidebar - Moved to Left */}
+      <BuildSidebar
+        build={build}
+        budget={budget}
+        region={region}
+        onComponentRemove={handleComponentRemove}
+      />
+
       {/* Main Content */}
       <div className="flex-1">
         {/* Header */}
@@ -357,14 +370,6 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
           </div>
         </div>
       </div>
-
-      {/* Sidebar */}
-      <BuildSidebar
-        build={build}
-        budget={budget}
-        region={region}
-        onComponentRemove={handleComponentRemove}
-      />
     </div>
   );
 };
