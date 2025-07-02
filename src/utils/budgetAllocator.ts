@@ -9,6 +9,14 @@ import { getVerifiedASIN } from '../data/verifiedASINs';
 import { amazonASINScraper } from '../services/amazonASINScraper';
 import { realAmazonScraper } from '../services/realAmazonScraper';
 import { amazonPAAPIService } from '../services/amazonPAAPIService';
+import { 
+  getSocketInfo, 
+  getCPUCompatibility, 
+  isMemoryCompatible, 
+  isCoolerCompatible,
+  powerRequirements,
+  memoryCompatibilityRules
+} from '../data/compatibilityRules';
 
 export type Region = 'US' | 'CA' | 'UK' | 'DE' | 'AU';
 
@@ -234,63 +242,130 @@ export function checkCompatibility(build: BuildConfiguration): {
   const warnings: string[] = [];
   let isCompatible = true;
   
-  // Check CPU and Motherboard socket compatibility
+  // Enhanced CPU and Motherboard socket compatibility using real-world data
   if (build.cpu && build.motherboard) {
-    if (build.cpu.specs.socket !== build.motherboard.specs.socket) {
-      warnings.push('CPU socket does not match motherboard socket');
+    const cpuSocket = build.cpu.specs.socket;
+    const motherboardSocket = build.motherboard.specs.socket;
+    
+    if (cpuSocket !== motherboardSocket) {
+      warnings.push(`CPU socket (${cpuSocket}) does not match motherboard socket (${motherboardSocket})`);
       isCompatible = false;
+    }
+    
+    // Additional CPU generation and chipset compatibility checks
+    const cpuCompatibility = getCPUCompatibility(build.cpu.name);
+    const motherboardChipset = (build.motherboard.specs as any).chipset;
+    
+    if (cpuCompatibility && motherboardChipset) {
+      if (!cpuCompatibility.supportedChipsets.includes(motherboardChipset)) {
+        warnings.push(`CPU ${build.cpu.name} may not be compatible with ${motherboardChipset} chipset`);
+        isCompatible = false;
+      }
     }
   }
   
-  // Check RAM and Motherboard compatibility
+  // Enhanced RAM and Motherboard compatibility using socket-specific rules
   if (build.ram && build.motherboard) {
-    if (build.ram.specs.memoryType !== build.motherboard.specs.memoryType) {
-      warnings.push('RAM type does not match motherboard memory support');
+    const memoryType = build.ram.specs.memoryType;
+    const motherboardSocket = build.motherboard.specs.socket;
+    
+    if (!isMemoryCompatible(motherboardSocket, memoryType)) {
+      const socketInfo = getSocketInfo(motherboardSocket);
+      const supportedTypes = socketInfo?.memoryType.join(', ') || 'Unknown';
+      warnings.push(`Memory type ${memoryType} not supported by ${motherboardSocket} socket. Supported: ${supportedTypes}`);
       isCompatible = false;
+    }
+    
+    // Check memory speed compatibility
+    const memoryRules = memoryCompatibilityRules[motherboardSocket as keyof typeof memoryCompatibilityRules];
+    const ramSpeed = (build.ram.specs as any).speed || 0;
+    
+    if (memoryRules && ramSpeed > memoryRules.maxSpeed) {
+      warnings.push(`Memory speed ${ramSpeed}MHz exceeds ${motherboardSocket} maximum of ${memoryRules.maxSpeed}MHz`);
+      // Don't mark as incompatible - it will just run at lower speed
     }
   }
   
-  // Check power requirements
+  // Enhanced power requirements based on Reddit build recommendations
   if (build.cpu && build.gpu && build.psu) {
-    const totalPower = (build.cpu.specs.powerDraw || 0) + (build.gpu.specs.powerDraw || 0) + 100; // +100 for other components
+    const cpuPower = build.cpu.specs.powerDraw || 0;
+    const gpuPower = build.gpu.specs.powerDraw || 0;
+    const systemPower = cpuPower + gpuPower + 150; // +150W for motherboard, RAM, storage, fans
     const psuWattage = build.psu.specs.wattage || 0;
     
-    if (totalPower > psuWattage * 0.8) { // 80% PSU utilization max
-      warnings.push('Power supply may be insufficient for this configuration');
+    // Use 80% rule (Reddit community standard)
+    const usablePower = psuWattage * 0.8;
+    
+    if (systemPower > usablePower) {
+      const recommendedWattage = Math.ceil(systemPower / 0.8 / 50) * 50; // Round up to nearest 50W
+      warnings.push(`Power supply insufficient. System needs ~${systemPower}W, PSU provides ${Math.round(usablePower)}W usable. Recommend ${recommendedWattage}W+ PSU`);
       isCompatible = false;
+    }
+    
+    // Warn about efficiency tier based on GPU tier
+    if (gpuPower > 300 && (!build.psu.specs.efficiency || !build.psu.specs.efficiency.includes('Gold'))) {
+      warnings.push('High-end GPU detected. Consider 80+ Gold or better PSU for efficiency');
+      // Don't mark incompatible, just a recommendation
     }
   }
   
-  // Check GPU clearance in case
+  // GPU clearance check with case form factor awareness
   if (build.gpu && build.case) {
     const gpuLength = build.gpu.specs.dimensions?.length || 0;
     const caseGpuClearance = build.case.specs.clearance?.gpu || 0;
     
     if (gpuLength > caseGpuClearance) {
-      warnings.push('Graphics card may not fit in selected case');
+      warnings.push(`Graphics card length (${gpuLength}mm) exceeds case clearance (${caseGpuClearance}mm)`);
+      isCompatible = false;
+    }
+    
+    // Warn about potential fit issues in small cases
+    const caseFormFactor = ((build.case.specs as any).formFactor?.toLowerCase() || '');
+    if ((caseFormFactor.includes('mini-itx') || caseFormFactor.includes('mini')) && gpuLength > 250) {
+      warnings.push('Large GPU in compact case - verify specific model compatibility');
+    }
+  }
+  
+  // Enhanced cooler compatibility using socket-specific rules
+  if (build.cooler && build.cpu) {
+    const cpuSocket = build.cpu.specs.socket;
+    const coolerSocket = build.cooler.specs.socket || build.cooler.specs.compatibility?.[0] || '';
+    
+    if (!isCoolerCompatible(cpuSocket, coolerSocket)) {
+      warnings.push(`CPU cooler not compatible with ${cpuSocket} socket`);
+      isCompatible = false;
+    }
+    
+    // Check TDP compatibility
+    const cpuTDP = build.cpu.specs.powerDraw || 0;
+    const coolerTDP = (build.cooler.specs as any).tdpRating || 0;
+    
+    if (coolerTDP > 0 && cpuTDP > coolerTDP) {
+      warnings.push(`CPU TDP (${cpuTDP}W) exceeds cooler rating (${coolerTDP}W)`);
       isCompatible = false;
     }
   }
   
-  // Check cooler clearance
+  // Cooler height clearance in case
   if (build.cooler && build.case) {
     const coolerHeight = build.cooler.specs.dimensions?.height || 0;
     const caseCoolerClearance = build.case.specs.clearance?.cooler || 0;
     
     if (coolerHeight > caseCoolerClearance) {
-      warnings.push('CPU cooler may not fit in selected case');
+      warnings.push(`CPU cooler height (${coolerHeight}mm) exceeds case clearance (${caseCoolerClearance}mm)`);
       isCompatible = false;
     }
   }
   
-  // Check cooler compatibility with CPU socket
-  if (build.cooler && build.cpu) {
-    const coolerCompatibility = build.cooler.specs.compatibility || [];
-    const cpuSocket = build.cpu.specs.socket || '';
-    
-    if (!coolerCompatibility.includes(cpuSocket)) {
-      warnings.push('CPU cooler is not compatible with selected CPU socket');
-      isCompatible = false;
+  // M.2 slot availability check
+  if (build.storage && build.motherboard) {
+    const storageType = build.storage.specs.interface?.toLowerCase() || '';
+    if (storageType.includes('m.2') || storageType.includes('nvme')) {
+      const m2Slots = (build.motherboard.specs as any).m2Slots || 1;
+      if (m2Slots < 1) {
+        warnings.push('M.2 storage selected but motherboard may not have M.2 slots');
+        isCompatible = false;
+      }
     }
   }
   
