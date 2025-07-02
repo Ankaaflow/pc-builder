@@ -396,29 +396,52 @@ export async function generateRecommendedBuild(
 
   const allocation = calculateBudgetAllocation(budget);
   
-  // Build components asynchronously, prioritizing budget-specific recommendations
-  const [cpu, gpu, motherboard, ram, storage, cooler, psu, caseComponent] = await Promise.all([
-    findBestComponentWithBudgetPreference('cpu', allocation.cpu, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('gpu', allocation.gpu, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('motherboard', allocation.motherboard, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('ram', allocation.ram, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('storage', allocation.storage, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('cooler', allocation.cooler, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('psu', allocation.psu, region, budgetSpecificComponents),
-    findBestComponentWithBudgetPreference('case', allocation.case, region, budgetSpecificComponents)
-  ]);
-  
+  // Build components sequentially to ensure compatibility
   const build: BuildConfiguration = {
-    cpu,
-    gpu,
-    motherboard,
-    ram,
-    storage,
-    cooler,
-    psu,
-    case: caseComponent
+    cpu: null,
+    gpu: null,
+    motherboard: null,
+    ram: null,
+    storage: null,
+    cooler: null,
+    psu: null,
+    case: null
   };
+
+  // Step 1: Select CPU first (foundation component)
+  build.cpu = await findBestComponentWithBudgetPreference('cpu', allocation.cpu, region, budgetSpecificComponents);
   
+  // Step 2: Select compatible motherboard based on CPU socket
+  build.motherboard = await findCompatibleComponent('motherboard', allocation.motherboard, region, budgetSpecificComponents, build);
+  
+  // Step 3: Select compatible RAM based on motherboard/CPU memory support
+  build.ram = await findCompatibleComponent('ram', allocation.ram, region, budgetSpecificComponents, build);
+  
+  // Step 4: Select GPU (generally independent, but consider PSU requirements)
+  build.gpu = await findBestComponentWithBudgetPreference('gpu', allocation.gpu, region, budgetSpecificComponents);
+  
+  // Step 5: Select compatible PSU based on CPU+GPU power requirements
+  build.psu = await findCompatibleComponent('psu', allocation.psu, region, budgetSpecificComponents, build);
+  
+  // Step 6: Select compatible cooler based on CPU socket and TDP
+  build.cooler = await findCompatibleComponent('cooler', allocation.cooler, region, budgetSpecificComponents, build);
+  
+  // Step 7: Select case with adequate clearance
+  build.case = await findCompatibleComponent('case', allocation.case, region, budgetSpecificComponents, build);
+  
+  // Step 8: Select storage (generally compatible with any motherboard)
+  build.storage = await findCompatibleComponent('storage', allocation.storage, region, budgetSpecificComponents, build);
+  
+  // Final compatibility check and fallback if needed
+  const compatibility = checkCompatibility(build);
+  if (!compatibility.isCompatible) {
+    console.warn('Generated build has compatibility issues, attempting to fix:', compatibility.warnings);
+    // Try to fix the most critical issues by replacing problematic components
+    const fixedBuild = await fixCompatibilityIssues(build, allocation, region, budgetSpecificComponents);
+    return fixedBuild;
+  }
+  
+  console.log('✅ Generated fully compatible recommended build');
   return build;
 }
 
@@ -454,6 +477,157 @@ async function findBestComponentWithBudgetPreference(
   
   // Fallback to standard component discovery (which now also allows over-budget)
   return findBestComponent(category, budget, region, requirements);
+}
+
+// Find compatible component based on existing build selections
+async function findCompatibleComponent(
+  category: keyof typeof allComponents,
+  budget: number,
+  region: Region,
+  budgetSpecificComponents: Component[],
+  currentBuild: BuildConfiguration
+): Promise<Component | null> {
+  // Get all available components for this category
+  let allCategoryComponents: Component[] = [];
+  
+  try {
+    const autonomousComponents = await autonomousComponentDiscovery.getLatestComponentsForCategory(category);
+    allCategoryComponents = [...autonomousComponents];
+    
+    for (const component of allCategoryComponents) {
+      try {
+        const pricing = await realTimePriceTracker.getComponentPricing(component.name, region);
+        if (pricing) {
+          component.price[region] = pricing.lowestPrice;
+          component.trend = pricing.trending;
+          component.availability = pricing.retailers.some(r => r.availability === 'in-stock') ? 'in-stock' : 'limited';
+        }
+      } catch (error) {
+        console.warn(`Failed to update pricing for ${component.name}:`, error);
+      }
+    }
+  } catch (error) {
+    console.warn('Autonomous discovery failed, using verified components:', error);
+    allCategoryComponents = [...allRealComponents[category]];
+  }
+  
+  // Add verified real components if needed
+  if (allCategoryComponents.length < 8) {
+    const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
+    const additionalComponents = allRealComponents[category].filter(
+      rc => !existingNames.has(rc.name.toLowerCase())
+    );
+    allCategoryComponents = [...allCategoryComponents, ...additionalComponents];
+  }
+
+  // Add budget-specific components
+  const budgetSpecificAvailable = budgetSpecificComponents
+    .filter(c => c.category === category && c.availability === 'in-stock');
+  
+  const existingNames = new Set(allCategoryComponents.map(c => c.name.toLowerCase()));
+  const newBudgetComponents = budgetSpecificAvailable.filter(
+    c => !existingNames.has(c.name.toLowerCase())
+  );
+  allCategoryComponents = [...allCategoryComponents, ...newBudgetComponents];
+
+  // Filter for available components
+  const available = allCategoryComponents.filter(
+    component => component.availability === 'in-stock'
+  );
+  
+  if (available.length === 0) return null;
+
+  // Filter for compatibility with existing build
+  const compatible = available.filter(component => {
+    const testBuild = { ...currentBuild, [category]: component };
+    const compatibility = checkCompatibility(testBuild);
+    return compatibility.isCompatible;
+  });
+
+  // If no compatible components, try to find the most compatible one
+  if (compatible.length === 0) {
+    console.warn(`No fully compatible ${category} components found, selecting best available`);
+    return available.sort((a, b) => a.price[region] - b.price[region])[0];
+  }
+
+  // Sort compatible components by preference (budget-specific first, then by price)
+  const sortedCompatible = compatible.sort((a, b) => {
+    // Prioritize budget-specific components
+    const aIsBudgetSpecific = budgetSpecificComponents.some(c => c.id === a.id);
+    const bIsBudgetSpecific = budgetSpecificComponents.some(c => c.id === b.id);
+    
+    if (aIsBudgetSpecific && !bIsBudgetSpecific) return -1;
+    if (!aIsBudgetSpecific && bIsBudgetSpecific) return 1;
+    
+    // Then by whether they're within budget
+    const aInBudget = a.price[region] <= budget;
+    const bInBudget = b.price[region] <= budget;
+    
+    if (aInBudget && !bInBudget) return -1;
+    if (!aInBudget && bInBudget) return 1;
+    
+    // Finally by price (higher within budget, lower if over budget)
+    if (aInBudget && bInBudget) {
+      return b.price[region] - a.price[region]; // Higher price = better performance
+    } else {
+      return a.price[region] - b.price[region]; // Lower price if over budget
+    }
+  });
+
+  const selectedComponent = sortedCompatible[0];
+  console.log(`Selected compatible ${category}: ${selectedComponent.name}`);
+  return selectedComponent;
+}
+
+// Fix compatibility issues in a build by replacing problematic components
+async function fixCompatibilityIssues(
+  build: BuildConfiguration,
+  allocation: BudgetAllocation,
+  region: Region,
+  budgetSpecificComponents: Component[]
+): Promise<BuildConfiguration> {
+  console.log('Attempting to fix compatibility issues...');
+  
+  let fixedBuild = { ...build };
+  let attempts = 0;
+  const maxAttempts = 3;
+  
+  while (attempts < maxAttempts) {
+    const compatibility = checkCompatibility(fixedBuild);
+    
+    if (compatibility.isCompatible) {
+      console.log(`✅ Fixed compatibility issues after ${attempts + 1} attempts`);
+      return fixedBuild;
+    }
+    
+    // Try to fix the most critical issues first
+    for (const warning of compatibility.warnings) {
+      if (warning.includes('socket')) {
+        // Socket mismatch - replace motherboard or CPU
+        if (fixedBuild.cpu && fixedBuild.motherboard) {
+          console.log('Fixing socket compatibility by replacing motherboard...');
+          fixedBuild.motherboard = await findCompatibleComponent('motherboard', allocation.motherboard, region, budgetSpecificComponents, { ...fixedBuild, motherboard: null });
+        }
+      } else if (warning.includes('Memory type')) {
+        // Memory compatibility - replace RAM
+        console.log('Fixing memory compatibility by replacing RAM...');
+        fixedBuild.ram = await findCompatibleComponent('ram', allocation.ram, region, budgetSpecificComponents, { ...fixedBuild, ram: null });
+      } else if (warning.includes('Power supply')) {
+        // PSU compatibility - replace PSU
+        console.log('Fixing PSU compatibility by replacing PSU...');
+        fixedBuild.psu = await findCompatibleComponent('psu', allocation.psu, region, budgetSpecificComponents, { ...fixedBuild, psu: null });
+      } else if (warning.includes('cooler')) {
+        // Cooler compatibility - replace cooler
+        console.log('Fixing cooler compatibility by replacing cooler...');
+        fixedBuild.cooler = await findCompatibleComponent('cooler', allocation.cooler, region, budgetSpecificComponents, { ...fixedBuild, cooler: null });
+      }
+    }
+    
+    attempts++;
+  }
+  
+  console.warn(`❌ Could not fix all compatibility issues after ${maxAttempts} attempts`);
+  return fixedBuild;
 }
 
 export function calculateTotalPrice(build: BuildConfiguration, region: Region): number {
