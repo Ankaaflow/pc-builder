@@ -3,31 +3,54 @@
 
 import { componentDatabaseService, DatabaseComponent } from './componentDatabaseService';
 import { amazonProductMatchingService } from './amazonProductMatchingService';
+import { componentCompatibilityService, CompatibilityResult } from './componentCompatibilityService';
 import { Component, Region, BudgetAllocation, BuildConfiguration } from '../utils/budgetAllocator';
+import { supabase } from '@/integrations/supabase/client';
 
 class DatabaseBudgetAllocator {
 
   /**
-   * Generate build recommendation using database components
+   * Generate build recommendation using database components with compatibility checking
    */
-  async generateDatabaseBuild(budget: number, region: Region): Promise<BuildConfiguration> {
-    console.log(`🏗️ Generating database build for $${budget} in ${region}...`);
+  async generateDatabaseBuild(budget: number, region: Region): Promise<BuildConfiguration & { compatibility: CompatibilityResult }> {
+    console.log(`🏗️ Generating compatible database build for $${budget} in ${region}...`);
 
     const allocation = this.calculateBudgetAllocation(budget);
     
-    // Get components from database for each category
-    const [cpu, gpu, motherboard, ram, storage, cooler, psu, caseComponent] = await Promise.all([
-      this.findBestDatabaseComponent('cpu', allocation.cpu, region),
+    // Start with CPU and motherboard as they define the platform
+    const cpu = await this.findBestDatabaseComponent('cpu', allocation.cpu, region);
+    if (!cpu) {
+      throw new Error('No compatible CPU found for budget');
+    }
+
+    // Find compatible motherboard for the CPU
+    const motherboard = await this.findCompatibleMotherboard(cpu, allocation.motherboard, region);
+    if (!motherboard) {
+      throw new Error(`No compatible motherboard found for ${cpu.name}`);
+    }
+
+    // Find compatible RAM for the motherboard
+    const ram = await this.findCompatibleRAM(motherboard, allocation.ram, region);
+    if (!ram) {
+      throw new Error(`No compatible RAM found for ${motherboard.name}`);
+    }
+
+    // Get other components with looser compatibility requirements
+    const [gpu, storage, cooler, caseComponent] = await Promise.all([
       this.findBestDatabaseComponent('gpu', allocation.gpu, region),
-      this.findBestDatabaseComponent('motherboard', allocation.motherboard, region),
-      this.findBestDatabaseComponent('ram', allocation.ram, region),
       this.findBestDatabaseComponent('storage', allocation.storage, region),
       this.findBestDatabaseComponent('cooler', allocation.cooler, region),
-      this.findBestDatabaseComponent('psu', allocation.psu, region),
       this.findBestDatabaseComponent('case', allocation.case, region)
     ]);
 
-    return {
+    // Calculate required PSU wattage
+    const tempBuild = { cpu, gpu, motherboard, ram, storage, cooler, case: caseComponent };
+    const powerRequirement = componentCompatibilityService.checkBuildCompatibility(tempBuild).estimatedWattage;
+    
+    // Find PSU with adequate wattage
+    const psu = await this.findCompatiblePSU(powerRequirement, allocation.psu, region);
+
+    const finalBuild = {
       cpu,
       gpu,
       motherboard,
@@ -36,6 +59,16 @@ class DatabaseBudgetAllocator {
       cooler,
       psu,
       case: caseComponent
+    };
+
+    // Final compatibility check
+    const compatibility = componentCompatibilityService.checkBuildCompatibility(finalBuild);
+    
+    console.log(`✅ Generated build with ${compatibility.issues.length} critical issues, ${compatibility.warnings.length} warnings`);
+    
+    return {
+      ...finalBuild,
+      compatibility
     };
   }
 
@@ -356,6 +389,179 @@ class DatabaseBudgetAllocator {
 
     const searchQuery = encodeURIComponent(componentName.replace(/[^\w\s]/g, '').trim());
     return `https://${domains[region]}/s?k=${searchQuery}&tag=${affiliateTags[region]}&ref=sr_st_relevancerank`;
+  }
+
+  /**
+   * Find compatible motherboard for given CPU
+   */
+  async findCompatibleMotherboard(cpu: Component, budget: number, region: Region): Promise<Component | null> {
+    try {
+      const dbComponents = await componentDatabaseService.getComponentsByCategory('motherboard', region);
+      
+      const compatibleMotherboards = [];
+      
+      for (const dbComp of dbComponents) {
+        const motherboard = await this.convertDatabaseComponent(dbComp, region);
+        if (!motherboard) continue;
+
+        // Check CPU-motherboard compatibility
+        const compatibility = componentCompatibilityService.checkBuildCompatibility({
+          cpu, motherboard
+        });
+
+        if (compatibility.compatible) {
+          compatibleMotherboards.push({
+            component: motherboard,
+            score: this.calculateComponentScore(motherboard, budget, region)
+          });
+        }
+      }
+
+      if (compatibleMotherboards.length === 0) {
+        console.warn(`No compatible motherboards found for ${cpu.name}`);
+        return null;
+      }
+
+      // Sort by score and return best
+      compatibleMotherboards.sort((a, b) => b.score - a.score);
+      const selected = compatibleMotherboards[0].component;
+      
+      console.log(`✅ Selected compatible motherboard: ${selected.name} for ${cpu.name}`);
+      return selected;
+
+    } catch (error) {
+      console.error(`Error finding compatible motherboard for ${cpu.name}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Find compatible RAM for given motherboard
+   */
+  async findCompatibleRAM(motherboard: Component, budget: number, region: Region): Promise<Component | null> {
+    try {
+      const dbComponents = await componentDatabaseService.getComponentsByCategory('ram', region);
+      
+      const compatibleRAM = [];
+      
+      for (const dbComp of dbComponents) {
+        const ram = await this.convertDatabaseComponent(dbComp, region);
+        if (!ram) continue;
+
+        // Check RAM-motherboard compatibility
+        const compatibility = componentCompatibilityService.checkBuildCompatibility({
+          motherboard, ram
+        });
+
+        if (compatibility.compatible) {
+          compatibleRAM.push({
+            component: ram,
+            score: this.calculateComponentScore(ram, budget, region)
+          });
+        }
+      }
+
+      if (compatibleRAM.length === 0) {
+        console.warn(`No compatible RAM found for ${motherboard.name}`);
+        return null;
+      }
+
+      // Sort by score and return best
+      compatibleRAM.sort((a, b) => b.score - a.score);
+      const selected = compatibleRAM[0].component;
+      
+      console.log(`✅ Selected compatible RAM: ${selected.name} for ${motherboard.name}`);
+      return selected;
+
+    } catch (error) {
+      console.error(`Error finding compatible RAM for ${motherboard.name}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Find PSU with adequate wattage
+   */
+  async findCompatiblePSU(requiredWattage: number, budget: number, region: Region): Promise<Component | null> {
+    try {
+      const dbComponents = await componentDatabaseService.getComponentsByCategory('psu', region);
+      
+      const adequatePSUs = [];
+      
+      for (const dbComp of dbComponents) {
+        const psu = await this.convertDatabaseComponent(dbComp, region);
+        if (!psu) continue;
+
+        // Check if PSU has enough wattage
+        const compatibility = componentCompatibilityService.checkBuildCompatibility({
+          psu
+        });
+
+        // Extract PSU wattage from name or specs
+        const psuWattage = this.extractPSUWattage(psu);
+        
+        if (psuWattage >= requiredWattage) {
+          adequatePSUs.push({
+            component: psu,
+            score: this.calculatePSUScore(psu, psuWattage, requiredWattage, budget, region),
+            wattage: psuWattage
+          });
+        }
+      }
+
+      if (adequatePSUs.length === 0) {
+        console.warn(`No PSU found with adequate wattage (${requiredWattage}W)`);
+        return null;
+      }
+
+      // Sort by score and return best
+      adequatePSUs.sort((a, b) => b.score - a.score);
+      const selected = adequatePSUs[0].component;
+      
+      console.log(`✅ Selected PSU: ${selected.name} (${adequatePSUs[0].wattage}W for ${requiredWattage}W requirement)`);
+      return selected;
+
+    } catch (error) {
+      console.error(`Error finding compatible PSU for ${requiredWattage}W:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Extract PSU wattage from component
+   */
+  private extractPSUWattage(psu: Component): number {
+    // Check specs first
+    if (psu.specs?.wattage) return psu.specs.wattage;
+    
+    // Extract from name
+    const wattageMatch = psu.name.match(/(\d{3,4})W/);
+    if (wattageMatch) return parseInt(wattageMatch[1]);
+    
+    // Default estimate
+    return 500;
+  }
+
+  /**
+   * Calculate PSU score considering wattage efficiency
+   */
+  private calculatePSUScore(psu: Component, psuWattage: number, requiredWattage: number, budget: number, region: Region): number {
+    let score = this.calculateComponentScore(psu, budget, region);
+    
+    // Efficiency bonus - prefer PSUs with 20-30% headroom
+    const headroom = (psuWattage - requiredWattage) / requiredWattage;
+    if (headroom >= 0.2 && headroom <= 0.5) {
+      score += 0.2; // Optimal headroom
+    } else if (headroom > 0.5) {
+      score += 0.1; // Good but potentially overkill
+    }
+    
+    // Efficiency rating bonus
+    if (psu.name.includes('80+ Gold')) score += 0.1;
+    if (psu.name.includes('80+ Platinum')) score += 0.15;
+    if (psu.name.includes('80+ Titanium')) score += 0.2;
+    
+    return score;
   }
 }
 
