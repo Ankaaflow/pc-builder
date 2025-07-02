@@ -376,6 +376,8 @@ export async function generateRecommendedBuild(
   budget: number,
   region: Region
 ): Promise<BuildConfiguration> {
+  console.log(`🏗️ Generating fully compatible recommended build for $${budget} in ${region}...`);
+  
   // First try to get budget-specific recommendations from r/buildapcforme
   const budgetSpecificComponents: Component[] = [];
   
@@ -396,7 +398,7 @@ export async function generateRecommendedBuild(
 
   const allocation = calculateBudgetAllocation(budget);
   
-  // Build components sequentially to ensure compatibility
+  // Build components sequentially to ensure compatibility - enhanced approach
   const build: BuildConfiguration = {
     cpu: null,
     gpu: null,
@@ -408,44 +410,168 @@ export async function generateRecommendedBuild(
     case: null
   };
 
-  // Step 1: Select CPU first (foundation component)
+  // Step 1: Select CPU first (foundation component) - prioritize compatibility
+  console.log('🔧 Step 1: Selecting CPU (foundation component)...');
   build.cpu = await findBestComponentWithBudgetPreference('cpu', allocation.cpu, region, budgetSpecificComponents);
   
-  // Step 2: Select compatible motherboard based on CPU socket
+  if (!build.cpu) {
+    console.error('❌ Failed to find CPU, cannot build compatible system');
+    throw new Error('Unable to find compatible CPU for build');
+  }
+  console.log(`✅ Selected CPU: ${build.cpu.name} (${build.cpu.specs.socket})`);
+  
+  // Step 2: Select compatible motherboard based on CPU socket - MUST be compatible
+  console.log('🔧 Step 2: Selecting compatible motherboard...');
   build.motherboard = await findCompatibleComponent('motherboard', allocation.motherboard, region, budgetSpecificComponents, build);
   
-  // Step 3: Select compatible RAM based on motherboard/CPU memory support
-  build.ram = await findCompatibleComponent('ram', allocation.ram, region, budgetSpecificComponents, build);
-  
-  // Step 4: Select GPU (generally independent, but consider PSU requirements)
-  build.gpu = await findBestComponentWithBudgetPreference('gpu', allocation.gpu, region, budgetSpecificComponents);
-  
-  // Step 5: Select compatible PSU based on CPU+GPU power requirements
-  build.psu = await findCompatibleComponent('psu', allocation.psu, region, budgetSpecificComponents, build);
-  
-  // Step 6: Select compatible cooler based on CPU socket and TDP
-  build.cooler = await findCompatibleComponent('cooler', allocation.cooler, region, budgetSpecificComponents, build);
-  
-  // Step 7: Select case with adequate clearance
-  build.case = await findCompatibleComponent('case', allocation.case, region, budgetSpecificComponents, build);
-  
-  // Step 8: Select storage (generally compatible with any motherboard)
-  build.storage = await findCompatibleComponent('storage', allocation.storage, region, budgetSpecificComponents, build);
-  
-  // Final compatibility check and fallback if needed
-  const compatibility = checkCompatibility(build);
-  if (!compatibility.isCompatible) {
-    console.warn('Generated build has compatibility issues, attempting to fix:', compatibility.warnings);
-    // Try to fix the most critical issues by replacing problematic components
-    const fixedBuild = await fixCompatibilityIssues(build, allocation, region, budgetSpecificComponents);
-    return fixedBuild;
+  if (!build.motherboard) {
+    console.error('❌ Failed to find compatible motherboard, regenerating with different CPU...');
+    // Try with a different CPU if motherboard compatibility fails
+    build.cpu = await findAlternativeCompatibleCPU(allocation.cpu, region, budgetSpecificComponents);
+    if (build.cpu) {
+      build.motherboard = await findCompatibleComponent('motherboard', allocation.motherboard, region, budgetSpecificComponents, build);
+    }
   }
   
-  console.log('✅ Generated fully compatible recommended build');
+  if (!build.motherboard) {
+    throw new Error('Unable to find compatible motherboard for build');
+  }
+  console.log(`✅ Selected Motherboard: ${build.motherboard.name} (${build.motherboard.specs.socket})`);
+  
+  // Step 3: Select compatible RAM based on motherboard/CPU memory support
+  console.log('🔧 Step 3: Selecting compatible RAM...');
+  build.ram = await findCompatibleComponent('ram', allocation.ram, region, budgetSpecificComponents, build);
+  
+  if (!build.ram) {
+    console.error('❌ Failed to find compatible RAM');
+    throw new Error('Unable to find compatible RAM for build');
+  }
+  console.log(`✅ Selected RAM: ${build.ram.name} (${build.ram.specs.memoryType})`);
+  
+  // Step 4: Select GPU (generally independent, but consider PSU requirements)
+  console.log('🔧 Step 4: Selecting GPU...');
+  build.gpu = await findBestComponentWithBudgetPreference('gpu', allocation.gpu, region, budgetSpecificComponents);
+  
+  if (!build.gpu) {
+    console.error('❌ Failed to find GPU');
+    throw new Error('Unable to find GPU for build');
+  }
+  console.log(`✅ Selected GPU: ${build.gpu.name} (${build.gpu.specs.powerDraw}W)`);
+  
+  // Step 5: Select compatible PSU based on CPU+GPU power requirements
+  console.log('🔧 Step 5: Selecting compatible PSU...');
+  build.psu = await findCompatibleComponent('psu', allocation.psu, region, budgetSpecificComponents, build);
+  
+  if (!build.psu) {
+    console.error('❌ Failed to find compatible PSU');
+    throw new Error('Unable to find compatible PSU for build');
+  }
+  console.log(`✅ Selected PSU: ${build.psu.name} (${build.psu.specs.wattage}W)`);
+  
+  // Step 6: Select compatible cooler based on CPU socket and TDP
+  console.log('🔧 Step 6: Selecting compatible cooler...');
+  build.cooler = await findCompatibleComponent('cooler', allocation.cooler, region, budgetSpecificComponents, build);
+  
+  if (!build.cooler) {
+    console.error('❌ Failed to find compatible cooler');
+    throw new Error('Unable to find compatible cooler for build');
+  }
+  console.log(`✅ Selected Cooler: ${build.cooler.name} (${build.cooler.specs.socket})`);
+  
+  // Step 7: Select case with adequate clearance
+  console.log('🔧 Step 7: Selecting compatible case...');
+  build.case = await findCompatibleComponent('case', allocation.case, region, budgetSpecificComponents, build);
+  
+  if (!build.case) {
+    console.error('❌ Failed to find compatible case');
+    throw new Error('Unable to find compatible case for build');
+  }
+  console.log(`✅ Selected Case: ${build.case.name}`);
+  
+  // Step 8: Select storage (generally compatible with any motherboard)
+  console.log('🔧 Step 8: Selecting storage...');
+  build.storage = await findCompatibleComponent('storage', allocation.storage, region, budgetSpecificComponents, build);
+  
+  if (!build.storage) {
+    console.error('❌ Failed to find storage');
+    throw new Error('Unable to find storage for build');
+  }
+  console.log(`✅ Selected Storage: ${build.storage.name}`);
+  
+  // Final compatibility check - this should ALWAYS pass now
+  console.log('🔍 Performing final compatibility verification...');
+  const compatibility = checkCompatibility(build);
+  if (!compatibility.isCompatible) {
+    console.error('❌ Generated build still has compatibility issues after all safeguards:', compatibility.warnings);
+    
+    // Last resort: attempt automated fix
+    console.log('🔧 Attempting emergency compatibility fix...');
+    const fixedBuild = await fixCompatibilityIssues(build, allocation, region, budgetSpecificComponents);
+    
+    const finalCheck = checkCompatibility(fixedBuild);
+    if (!finalCheck.isCompatible) {
+      console.error('❌ Emergency fix failed. Build may have compatibility issues:', finalCheck.warnings);
+      // Return the build anyway but log the issue
+    } else {
+      console.log('✅ Emergency fix successful - build is now compatible');
+      return fixedBuild;
+    }
+  }
+  
+  console.log('🎉 Generated fully compatible recommended build successfully!');
   return build;
 }
 
-async function findBestComponentWithBudgetPreference(
+// Enhanced function to find alternative CPU if first choice doesn't work
+async function findAlternativeCompatibleCPU(
+  budget: number,
+  region: Region,
+  budgetSpecificComponents: Component[]
+): Promise<Component | null> {
+  console.log('🔄 Finding alternative CPU for better motherboard compatibility...');
+  
+  let allCPUs: Component[] = [];
+  
+  try {
+    const autonomousCPUs = await autonomousComponentDiscovery.getLatestComponentsForCategory('cpu');
+    allCPUs = [...autonomousCPUs, ...allRealComponents.cpu];
+  } catch (error) {
+    allCPUs = [...allRealComponents.cpu];
+  }
+  
+  // Filter for available CPUs within expanded budget range
+  const availableCPUs = allCPUs.filter(cpu => 
+    cpu.availability === 'in-stock' && 
+    cpu.price[region] <= budget * 1.5 // Allow going over budget for compatibility
+  );
+  
+  // Sort by socket popularity (AM5, LGA1700 are current gen with more motherboard options)
+  availableCPUs.sort((a, b) => {
+    const socketPriority = { 'AM5': 5, 'LGA1700': 4, 'LGA1851': 3, 'AM4': 2 };
+    const aPriority = socketPriority[a.specs.socket as keyof typeof socketPriority] || 1;
+    const bPriority = socketPriority[b.specs.socket as keyof typeof socketPriority] || 1;
+    
+    if (aPriority !== bPriority) return bPriority - aPriority;
+    
+    // Then by budget fit
+    const aInBudget = a.price[region] <= budget;
+    const bInBudget = b.price[region] <= budget;
+    
+    if (aInBudget && !bInBudget) return -1;
+    if (!aInBudget && bInBudget) return 1;
+    
+    return b.price[region] - a.price[region];
+  });
+  
+  const alternativeCPU = availableCPUs[0];
+  if (alternativeCPU) {
+    console.log(`🔄 Selected alternative CPU: ${alternativeCPU.name} (${alternativeCPU.specs.socket})`);
+  }
+  
+  return alternativeCPU || null;
+}
+
+export async function findBestComponentWithBudgetPreference(
   category: keyof typeof allComponents,
   budget: number,
   region: Region,

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -82,6 +83,15 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
       try {
         const recommendedBuild = await generateRecommendedBuild(budget, region);
         setBuild(recommendedBuild);
+        
+        // Verify the recommended build is compatible
+        const compatibility = checkCompatibility(recommendedBuild);
+        if (!compatibility.isCompatible) {
+          console.error('❌ Generated recommended build has compatibility issues:', compatibility.warnings);
+          // This should not happen with the enhanced generateRecommendedBuild function
+        } else {
+          console.log('✅ Generated fully compatible recommended build');
+        }
       } catch (error) {
         console.error('Failed to generate recommended build:', error);
       } finally {
@@ -175,17 +185,24 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
       console.warn('Failed to fetch Reddit components for alternatives:', error);
     }
     
-    // Filter for compatibility - only show compatible components
+    // For alternatives, show ALL available components within reasonable budget range
+    // Don't filter by compatibility - let users see warnings if they select incompatible parts
     const filteredComponents = allCategoryComponents.filter(component => {
-      const testBuild = { ...build, [category]: component };
-      const compatibility = checkCompatibility(testBuild);
-      
-      return component.price[region] <= categoryBudget * 1.5 &&
-             component.availability === 'in-stock' &&
-             compatibility.isCompatible;
+      return component.price[region] <= categoryBudget * 2.0 && // More generous budget range for alternatives
+             component.availability === 'in-stock';
     });
     
     return filteredComponents.sort((a, b) => {
+      // First prioritize compatible components
+      const testBuildA = { ...build, [category]: a };
+      const testBuildB = { ...build, [category]: b };
+      const compatibilityA = checkCompatibility(testBuildA);
+      const compatibilityB = checkCompatibility(testBuildB);
+      
+      if (compatibilityA.isCompatible && !compatibilityB.isCompatible) return -1;
+      if (!compatibilityA.isCompatible && compatibilityB.isCompatible) return 1;
+      
+      // Then by source priority
       const aIsAutonomous = a.id.includes('auto') || a.id.includes('retailer') || a.id.includes('news');
       const bIsAutonomous = b.id.includes('auto') || b.id.includes('retailer') || b.id.includes('news');
       
@@ -198,7 +215,18 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
       if (aIsReal && !bIsReal) return -1;
       if (!aIsReal && bIsReal) return 1;
       
-      return a.price[region] - b.price[region];
+      // Finally by price (within budget first, then by performance)
+      const aInBudget = a.price[region] <= categoryBudget * 1.2;
+      const bInBudget = b.price[region] <= categoryBudget * 1.2;
+      
+      if (aInBudget && !bInBudget) return -1;
+      if (!aInBudget && bInBudget) return 1;
+      
+      if (aInBudget && bInBudget) {
+        return b.price[region] - a.price[region]; // Higher price first within budget
+      } else {
+        return a.price[region] - b.price[region]; // Lower price first if over budget
+      }
     });
   };
 
@@ -209,6 +237,14 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
     if (compatibility.isCompatible) return 'compatible';
     if (compatibility.warnings.length > 0) return 'warning';
     return 'incompatible';
+  };
+
+  const isSelectedComponentIncompatible = (category: keyof BuildConfiguration) => {
+    const selectedComponent = build[category];
+    if (!selectedComponent) return false;
+    
+    const status = getCompatibilityStatus(selectedComponent, category);
+    return status === 'incompatible' || status === 'warning';
   };
 
   if (isLoading) {
@@ -224,7 +260,7 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
 
   return (
     <div className="flex min-h-screen bg-gray-50">
-      {/* Sidebar - Moved to Left */}
+      {/* Sidebar - Left */}
       <BuildSidebar
         build={build}
         budget={budget}
@@ -253,13 +289,14 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
           </div>
         </div>
 
-        {/* Component Cards Grid - Wealthsimple Style */}
+        {/* Component Cards Grid */}
         <div className="p-6">
           <div className="grid gap-6 max-w-4xl">
             {Object.entries(categoryIcons).map(([category, IconComponent]) => {
               const selectedComponent = build[category as keyof BuildConfiguration];
               const isExpanded = expandedCategory === category;
               const alternatives = categoryAlternatives[category as keyof BuildConfiguration];
+              const isIncompatible = isSelectedComponentIncompatible(category as keyof BuildConfiguration);
               
               return (
                 <Card key={category} className="overflow-hidden">
@@ -271,6 +308,11 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
                         <Badge variant="outline" className="text-xs">
                           ${budgetAllocation[category as keyof BuildConfiguration].toLocaleString()}
                         </Badge>
+                        {isIncompatible && (
+                          <Badge variant="destructive" className="text-xs">
+                            Warning
+                          </Badge>
+                        )}
                       </div>
                       {selectedComponent && (
                         <Button
@@ -308,7 +350,7 @@ const ComponentSelector: React.FC<ComponentSelectorProps> = ({
                               <p className="text-sm text-gray-500">Loading alternatives...</p>
                             ) : (
                               <div className="space-y-3 max-h-96 overflow-y-auto">
-                                {alternatives.slice(0, 5).map((component) => (
+                                {alternatives.slice(0, 8).map((component) => (
                                   <ComponentCard
                                     key={component.id}
                                     component={component}
